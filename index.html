@@ -2,7 +2,10 @@
 <html lang="pt-BR" class="h-full">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0d2a0d">
   <title>NutriMind IA — Dieta & Treino</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style id="tw-micro">
@@ -383,42 +386,80 @@
     @keyframes goldShine{0%,100%{opacity:1}50%{opacity:.7}}
     .gold-shine{animation:goldShine 2s ease-in-out infinite}
 
-    /* ── RESPONSIVO: celular, tablet e PC ──────────────────────── */
-    /* Celular (padrão): app ocupa a tela inteira */
+    /* iOS: impede o zoom automático ao focar inputs (fonte mínima 16px) */
+    input, select, textarea{
+      font-size:16px !important;
+    }
+    /* Barra de navegação respeita a área segura (gesto do iPhone) */
+    .nav-bar{
+      padding-bottom:calc(18px + env(safe-area-inset-bottom)) !important;
+    }
+
+    /* ── RESPONSIVO: todos os dispositivos ──────────────────────── */
+    /* Altura dinâmica: resolve a barra do navegador móvel que corta a tela */
+    html,body{ height:100%; height:100dvh; }
+
+    /* Celular (padrão): app ocupa a tela inteira, respeitando notch/safe-area */
     #app{
       height:100%;
+      height:100dvh;
       width:100%;
       max-width:480px;
       margin:0 auto;
       position:relative;
       background:var(--bg);
+      padding-left:env(safe-area-inset-left);
+      padding-right:env(safe-area-inset-right);
     }
-    /* Tablet e PC: app vira um "app centralizado" com fundo agradável */
+
+    /* Celulares pequenos (iPhone SE, 320-360px): reduz folgas */
+    @media (max-width:360px){
+      .px-5{ padding-left:16px; padding-right:16px; }
+      .p-5{ padding:16px; }
+      .p-6{ padding:18px; }
+      h1.text-xl{ font-size:1.05rem; }
+      .text-2xl{ font-size:1.3rem; }
+    }
+
+    /* Celular deitado (landscape) com pouca altura: compacta verticalmente */
+    @media (max-height:480px) and (orientation:landscape){
+      #app{ height:auto; min-height:100dvh; }
+      .nav-bar{ padding:6px 0 8px; }
+    }
+
+    /* Tablet e PC: app centralizado num "frame de celular" elegante */
     @media (min-width:600px){
       body{
         display:flex;
         align-items:center;
         justify-content:center;
         min-height:100vh;
+        min-height:100dvh;
         padding:24px;
         background:linear-gradient(135deg,#0d2a0d 0%,#14532d 55%,#0a1f0a 100%);
       }
       #app{
-        height:calc(100vh - 48px);
+        height:calc(100dvh - 48px);
         max-height:920px;
         width:430px;
         border-radius:36px;
         overflow:hidden;
         box-shadow:0 24px 80px rgba(0,0,0,.45), 0 0 0 10px rgba(255,255,255,.06);
         border:1px solid rgba(255,255,255,.12);
+        padding-left:0;
+        padding-right:0;
       }
       /* Nav bar e modais grudam no frame, não na janela */
       .nav-bar{ position:absolute; }
       .modal-ov{ position:absolute; }
     }
-    /* Telas bem grandes: um pouco mais alto */
+    /* Telas grandes: frame um pouco mais largo */
     @media (min-width:1024px){
       #app{ width:440px; }
+    }
+    /* Monitores muito grandes: mantém proporção agradável */
+    @media (min-width:1440px){
+      #app{ width:450px; max-height:960px; }
     }
   </style>
 </head>
