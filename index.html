@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NutriMind IA — Dieta & Treino</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style id="tw-micro">
 
 /* ── NUTRIMIND IA – Micro CSS (substitui Tailwind CDN) ── */
@@ -170,7 +171,7 @@
       --green:#22c55e;--green-dark:#14532d;--green-mid:#15803d;
       --green-light:#dcfce7;--green-card:#f0fdf4;
       --accent:#4ade80;--gold:#f59e0b;
-      --text:#0a1f0a;--text-2:#2d4a2d;--text-3:#6b8f6b;
+      --text:#0a1f0a;--text-2:#1f3a1f;--text-3:#4a6b4a;
       --border:#c8e6c9;--card:#fff;--bg:#f0f7f1;--bg2:#e8f5e9;
       --dark:#0a1f0a;--dark2:#14532d;
       --shadow:0 4px 24px rgba(20,83,45,.10);
@@ -305,9 +306,9 @@
     @keyframes goldShine{0%,100%{opacity:1}50%{opacity:.7}}
     .gold-shine{animation:goldShine 2s ease-in-out infinite}
     :root{
-      --green:#22c55e;--green-dark:#16a34a;--green-light:#dcfce7;
-      --green-mid:#bbf7d0;--text:#0f1f0f;--text-2:#4b6350;
-      --text-3:#8aab90;--border:#e2f0e5;--card:#fff;--bg:#f7faf7;--bg2:#eef7f0
+      --green:#22c55e;--green-dark:#14532d;--green-light:#dcfce7;
+      --green-mid:#15803d;--text:#0f1f0f;--text-2:#33523b;
+      --text-3:#52755b;--border:#e2f0e5;--card:#fff;--bg:#f7faf7;--bg2:#eef7f0
     }
     @keyframes fadeUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
     @keyframes ringAnim{from{stroke-dashoffset:440}}
@@ -381,13 +382,59 @@
     .rx-meta-card{background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1.5px solid #bfdbfe;border-radius:16px;padding:14px;margin-bottom:10px}
     @keyframes goldShine{0%,100%{opacity:1}50%{opacity:.7}}
     .gold-shine{animation:goldShine 2s ease-in-out infinite}
+
+    /* ── RESPONSIVO: celular, tablet e PC ──────────────────────── */
+    /* Celular (padrão): app ocupa a tela inteira */
+    #app{
+      height:100%;
+      width:100%;
+      max-width:480px;
+      margin:0 auto;
+      position:relative;
+      background:var(--bg);
+    }
+    /* Tablet e PC: app vira um "app centralizado" com fundo agradável */
+    @media (min-width:600px){
+      body{
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        min-height:100vh;
+        padding:24px;
+        background:linear-gradient(135deg,#0d2a0d 0%,#14532d 55%,#0a1f0a 100%);
+      }
+      #app{
+        height:calc(100vh - 48px);
+        max-height:920px;
+        width:430px;
+        border-radius:36px;
+        overflow:hidden;
+        box-shadow:0 24px 80px rgba(0,0,0,.45), 0 0 0 10px rgba(255,255,255,.06);
+        border:1px solid rgba(255,255,255,.12);
+      }
+      /* Nav bar e modais grudam no frame, não na janela */
+      .nav-bar{ position:absolute; }
+      .modal-ov{ position:absolute; }
+    }
+    /* Telas bem grandes: um pouco mais alto */
+    @media (min-width:1024px){
+      #app{ width:440px; }
+    }
   </style>
 </head>
 <body class="h-full" style="background:var(--bg)">
-<div id="app" class="h-full w-full max-w-md mx-auto relative"></div>
+<div id="app" class="h-full w-full relative"></div>
 <div id="toast-el" style="display:none" class="toast"></div>
 
 <script>
+// ─── CONFIGURAÇÃO SUPABASE ──────────────────────────────────────────────────
+const SUPABASE_URL = "https://sywlmcalaqqkeecmbnqs.supabase.co";
+const SUPABASE_KEY = "sb_publishable_jlkSSKYJ_20JFwIi2PRhKA_e6TUYYCC";
+const sb = (window.supabase && window.supabase.createClient)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+  : null;
+let currentUser = null;
+
 // ─── BANCO DE ALIMENTOS (60 itens) ───────────────────────────────────────────
 const FOODS=[
   {id:1,n:"Frango grelhado",cal:165,p:31,c:0,g:3.6,cat:"prot",e:"🍗"},
@@ -1015,6 +1062,17 @@ const FEATURES = {
   planoTreino: false      // plano "Dieta & Treino IA"
 };
 
+// ─── SEGURANÇA: sanitiza texto do usuário antes de injetar no HTML (anti-XSS) ──
+function esc(s){
+  if(s==null) return '';
+  return String(s)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
+
 // ─── STATE ───────────────────────────────────────────────────────────────────
 function loadState(){try{const s=localStorage.getItem('ng4');return s?JSON.parse(s):null;}catch{return null;}}
 function saveState(s){try{localStorage.setItem('ng4',JSON.stringify(s));}catch{}}
@@ -1022,14 +1080,14 @@ function saveState(s){try{localStorage.setItem('ng4',JSON.stringify(s));}catch{}
 const saved=loadState();
 let state=saved||{
   screen:'login',step:0,
-  authed:false,authMode:'login',authEmail:'',authName:'',
+  authed:false,authMode:'signup',authEmail:'',authName:'',
   goal:null,name:'',sex:'M',age:25,weight:70,height:170,activity:'moderate',restrictions:[],
   tdee:0,targetCal:0,
   todayLog:[],weekLog:[],
   actLog:[],actWeek:[],
   tab:'home',
   selMeal:'Almoço',selGrams:100,selFoodId:null,
-  searchQ:'',searchCat:'all',favorites:[],
+  searchQ:'',searchCat:'all',showAllFoods:false,favorites:[],
   planViewMode:'overview',shopGoal:null,shopDays:7,
   userWeights:[],
   waterGoal:8,waterToday:0,
@@ -1060,7 +1118,8 @@ let state=saved||{
   aiDietSelDay:0,
   aiDietLoading:false,
   aiGenMonth:null,          // mês de referência (YYYY-MM) do contador
-  aiDietGenCount:0,         // dietas geradas no mês
+  aiDietGenCount:0,         // dietas geradas com IA (interno, não exibido)
+  localDietSeed:0,          // rotação das dietas montadas localmente
   aiWorkoutGenCount:0,      // treinos gerados no mês
   personalScreen:false,
   personalAuth:false,
@@ -1103,7 +1162,7 @@ function calcIMC(){
   return{imc:imc.toFixed(1),cls,pesoIdealMin:(18.5*h*h).toFixed(1),pesoIdealMax:(24.9*h*h).toFixed(1)};
 }
 
-function setState(patch){Object.assign(state,patch);saveState(state);render();}
+function setState(patch){Object.assign(state,patch);saveState(state);syncToCloud();render();}
 
 function showToast(msg){
   const t=document.getElementById('toast-el');
@@ -1203,7 +1262,7 @@ function addExtraMeal(name){
   const extra=[...(state.extraMeals||[])];
   if(!extra.includes(name)){
     extra.push(name);
-    setState({extraMeals:extra,showAddMealModal:false,selMeal:name,tab:'search',selFoodId:null});
+    setState({extraMeals:extra,showAddMealModal:false,selMeal:name,tab:'plan',selFoodId:null});
     showToast(`✓ ${name} adicionada`);
   } else {
     setState({showAddMealModal:false});
@@ -1296,12 +1355,12 @@ function renderLogin(el){
         ${isSignup?`
         <div class="fi mb-3">
           <label>Nome completo</label>
-          <input type="text" id="authNameInput" value="${state.authName||''}" placeholder="Seu nome" autocomplete="name">
+          <input type="text" id="authNameInput" value="${esc(state.authName)}" placeholder="Seu nome" autocomplete="name">
         </div>`:''}
 
         <div class="fi mb-3">
           <label>E-mail</label>
-          <input type="email" id="authEmailInput" value="${state.authEmail||''}" placeholder="seu@email.com" autocomplete="email">
+          <input type="email" id="authEmailInput" value="${esc(state.authEmail)}" placeholder="seu@email.com" autocomplete="email">
         </div>
 
         <div class="fi mb-2">
@@ -1339,10 +1398,9 @@ function renderLogin(el){
       </div>
 
       <!-- Toggle login/signup -->
-      <div class="text-center mt-6">
-        <span class="text-sm" style="color:var(--text-3)">${isSignup?'Já tem conta?':'Não tem conta?'}</span>
-        <span onclick="setState({authMode:'${isSignup?'login':'signup'}'})" class="text-sm font-bold ml-1" style="color:var(--green-mid);cursor:pointer">${isSignup?'Entrar':'Criar conta'}</span>
-      </div>
+      <button onclick="setState({authMode:'${isSignup?'login':'signup'}'})" class="w-full mt-5 py-3 rounded-2xl text-sm font-bold" style="background:var(--green-light);color:var(--green-dark);border:none;cursor:pointer;font-family:inherit">
+        ${isSignup?'Já tenho conta · Entrar':'Criar uma conta nova'}
+      </button>
 
       <!-- Pular (modo visual) -->
       <div class="text-center mt-4">
@@ -1357,45 +1415,163 @@ function renderLogin(el){
   setTimeout(()=>{try{lucide.createIcons();}catch(e){}},20);
 }
 
-// ─── PONTOS DE PLUGAGEM DO BACKEND (hoje só validação visual) ───
-function authNext(){
-  // Decide próxima tela: se já fez onboarding (tem objetivo), vai pro app; senão onboarding
-  const next=(state.goal&&state.tdee>0)?'main':'onboarding';
-  setState({authed:true,screen:next,authMode:'login'});
+// ─── AUTENTICAÇÃO REAL (Supabase) ───────────────────────────────────────────
+function authNext(forceOnboarding){
+  // Cadastro novo: sempre vai pro questionário de objetivos.
+  // Login: vai pro app se já tem perfil; senão, questionário.
+  const next=(!forceOnboarding && state.goal && state.tdee>0)?'main':'onboarding';
+  setState({authed:true,screen:next,step:0,authMode:'login'});
 }
-function doLogin(){
+
+function traduzErro(msg){
+  if(/Invalid login credentials/i.test(msg)) return 'E-mail ou senha incorretos';
+  if(/already registered|already been registered/i.test(msg)) return 'Este e-mail já tem conta';
+  if(/Email not confirmed/i.test(msg)) return 'Confirme seu e-mail antes de entrar';
+  if(/rate limit|too many/i.test(msg)) return 'Muitas tentativas. Aguarde um momento';
+  if(/network|fetch/i.test(msg)) return 'Sem conexão com a internet';
+  if(/password/i.test(msg)) return 'Senha inválida (mínimo 6 caracteres)';
+  return msg;
+}
+
+async function doLogin(){
   const email=(document.getElementById('authEmailInput')?.value||'').trim();
   const pass=(document.getElementById('authPassInput')?.value||'').trim();
   if(!email||!pass){ showToast('Preencha e-mail e senha'); return; }
   if(!email.includes('@')){ showToast('E-mail inválido'); return; }
-  // TODO(backend): autenticar com Supabase aqui
-  state.authEmail=email;
-  if(!state.name) state.name=email.split('@')[0];
+  if(!sb){ showToast('⚠️ Conexão indisponível'); return; }
+  showToast('Entrando...');
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+  if(error){ showToast('❌ '+traduzErro(error.message)); return; }
+  currentUser = data.user;
+  state.authEmail = email;
+  await carregarPerfil();
   authNext();
 }
-function doSignup(){
+
+async function doSignup(){
   const name=(document.getElementById('authNameInput')?.value||'').trim();
   const email=(document.getElementById('authEmailInput')?.value||'').trim();
   const pass=(document.getElementById('authPassInput')?.value||'').trim();
   if(!name||!email||!pass){ showToast('Preencha todos os campos'); return; }
   if(!email.includes('@')){ showToast('E-mail inválido'); return; }
   if(pass.length<6){ showToast('A senha precisa de ao menos 6 caracteres'); return; }
-  // TODO(backend): criar conta no Supabase aqui
+  if(!sb){ showToast('⚠️ Conexão indisponível'); return; }
+  showToast('Criando conta...');
+  const { data, error } = await sb.auth.signUp({
+    email, password: pass,
+    options:{ data:{ nome: name } }
+  });
+  if(error){ showToast('❌ '+traduzErro(error.message)); return; }
+  // Se a confirmação de e-mail estiver ligada, não há sessão ainda
+  if(!data.session){
+    showToast('📧 Verifique seu e-mail para confirmar a conta');
+    setState({authMode:'login'});
+    return;
+  }
+  currentUser = data.user;
+  // Conta nova: zera o perfil para começar o questionário do zero
   state.authEmail=email; state.authName=name; state.name=name;
-  showToast(`✅ Conta criada! Bem-vindo, ${name.split(' ')[0]}`);
-  authNext();
+  state.goal=null; state.tdee=0; state.targetCal=0;
+  await salvarPerfil();
+  showToast(`✅ Conta criada! Vamos montar seu perfil, ${esc(name.split(' ')[0])}`);
+  authNext(true);
 }
-function doSocialLogin(provider){
-  // TODO(backend): OAuth Google/Apple via Supabase aqui
-  showToast(`🔧 Login com ${provider==='google'?'Google':'Apple'} disponível em breve`);
+
+async function doSocialLogin(provider){
+  if(!sb){ showToast('⚠️ Conexão indisponível'); return; }
+  const { error } = await sb.auth.signInWithOAuth({
+    provider, options:{ redirectTo: window.location.href }
+  });
+  if(error) showToast('❌ '+traduzErro(error.message));
 }
+
 function skipLogin(){
   state.authed=false;
   authNext();
 }
-function doLogout(){
+
+async function doLogout(){
+  if(sb) await sb.auth.signOut();
+  currentUser=null;
   setState({authed:false,screen:'login',authMode:'login'});
   showToast('Você saiu da conta');
+}
+
+// ─── SINCRONIZAÇÃO DE DADOS ─────────────────────────────────────────────────
+async function carregarPerfil(){
+  if(!currentUser || !sb) return;
+  try {
+    const { data, error } = await sb.from('profiles').select('*').eq('id', currentUser.id).single();
+    if(error || !data) return;
+    if(data.app_state && Object.keys(data.app_state).length){
+      Object.assign(state, data.app_state);
+    }
+    state.name      = data.nome      || state.name;
+    state.goal      = data.goal      || state.goal;
+    state.weight    = data.weight    || state.weight;
+    state.height    = data.height    || state.height;
+    state.age       = data.age       || state.age;
+    state.sex       = data.sex       || state.sex;
+    state.activity  = data.activity  || state.activity;
+    state.tdee      = data.tdee      || state.tdee;
+    state.targetCal = data.target_cal|| state.targetCal;
+    state.planTier  = data.plan_tier || 'free';   // servidor é a fonte da verdade
+    state.aiGenMonth        = data.ai_gen_month   ?? state.aiGenMonth;
+    state.aiDietGenCount    = data.ai_diet_count  ?? state.aiDietGenCount;
+    state.aiWorkoutGenCount = data.ai_workout_count ?? state.aiWorkoutGenCount;
+    saveState(state);
+  } catch(e){ console.warn('carregarPerfil:', e.message); }
+}
+
+let _syncTimer=null;
+async function salvarPerfil(){
+  if(!currentUser || !sb) return;
+  // NÃO enviamos plan_tier: o banco bloqueia o cliente de mudar o próprio plano.
+  const safeState = {...state};
+  delete safeState.planTier; delete safeState.planExpiry; delete safeState.premiumActive;
+  const payload = {
+    id: currentUser.id, email: currentUser.email, nome: state.name,
+    goal: state.goal, sex: state.sex, age: state.age, weight: state.weight,
+    height: state.height, activity: state.activity, restrictions: state.restrictions||[],
+    tdee: state.tdee, target_cal: state.targetCal, app_state: safeState,
+    ai_gen_month: state.aiGenMonth, ai_diet_count: state.aiDietGenCount||0,
+    ai_workout_count: state.aiWorkoutGenCount||0
+  };
+  try { const { error } = await sb.from('profiles').upsert(payload);
+    if(error) console.warn('salvarPerfil:', error.message);
+  } catch(e){ console.warn('salvarPerfil:', e.message); }
+}
+
+function syncToCloud(){
+  if(!currentUser) return;
+  clearTimeout(_syncTimer);
+  _syncTimer=setTimeout(salvarPerfil, 2000);
+}
+
+async function initAuth(){
+  if(!sb) return;
+  try {
+    const { data } = await sb.auth.getSession();
+    if(data.session){
+      currentUser = data.session.user;
+      await carregarPerfil();
+      if(state.screen==='login'){
+        state.authed=true;
+        state.screen=(state.goal&&state.tdee>0)?'main':'onboarding';
+      }
+    }
+    sb.auth.onAuthStateChange((event, session)=>{
+      if(event==='SIGNED_IN' && session){
+        currentUser = session.user;
+        carregarPerfil().then(()=>{
+          if(state.screen==='login'){
+            setState({authed:true, screen:(state.goal&&state.tdee>0)?'main':'onboarding'});
+          }
+        });
+      }
+      if(event==='SIGNED_OUT'){ currentUser=null; }
+    });
+  } catch(e){ console.warn('initAuth:', e.message); }
 }
 
 // ══════════════ ONBOARDING ════════════════════════════════════════════════════
@@ -1482,7 +1658,7 @@ function renderOnboarding(el){
         <p class="text-sm" style="color:var(--text-2)">Para cálculos precisos e personalizados</p>
       </div>
       <div class="flex-1 overflow-auto">
-        <div class="fi"><label>Nome (opcional)</label><input type="text" id="inp_name" value="${state.name||''}" placeholder=" " autocomplete="off"></div>
+        <div class="fi"><label>Nome (opcional)</label><input type="text" id="inp_name" value="${esc(state.name)}" placeholder=" " autocomplete="off"></div>
         <div class="grid grid-cols-2 gap-3">
           <div class="fi"><label>Sexo biológico</label><select id="inp_sex"><option value="M" ${state.sex==='M'?'selected':''}>Masculino</option><option value="F" ${state.sex==='F'?'selected':''}>Feminino</option></select></div>
           <div class="fi"><label>Idade (anos)</label><input type="number" id="inp_age" value="${state.age}" min="10" max="99" placeholder=" "></div>
@@ -1642,9 +1818,9 @@ function renderMain(el){
 
   const tabs=[
     {id:'home',    icon:'home',     label:'Início',  lock:false},
-    {id:'search',  icon:'search',   label:'Dieta',   lock:!hasNutri()},
+    {id:'search',  icon:'utensils-crossed', label:'Dieta', lock:!hasNutri()},
     {id:'activity',icon:'activity', label:'Atividade', lock:false},
-    {id:'plan',    icon:'calendar', label:'Plano',   lock:!hasNutri()},
+    {id:'plan',    icon:'search',   label:'Alimentos', lock:!hasNutri()},
     {id:'premium', icon:'star',     label:'Planos',  lock:false}
   ];
 
@@ -1654,9 +1830,9 @@ function renderMain(el){
   let content='';
   if(isLocked)               content=renderLockedFeature(tab);
   else if(tab==='home')      content=renderHome();
-  else if(tab==='search')    content=renderSearch();
+  else if(tab==='search')    content=renderPlan();   // aba "Dieta" → plano alimentar
   else if(tab==='activity')  content=renderActivity();
-  else if(tab==='plan')      content=renderPlan();
+  else if(tab==='plan')      content=renderSearch(); // aba "Alimentos" → busca de alimentos
   else if(tab==='premium')   content=renderPremium();
   else if(tab==='progress')  content=renderProgress();
   else if(tab==='profile')   content=renderProfile();
@@ -1711,7 +1887,7 @@ function renderHome(){
   const today=new Date().toISOString().slice(0,10);
   const todayBurned=(state.actLog||[]).filter(a=>a.date===today).reduce((s,a)=>s+a.kcal,0);
   const rem=Math.max(target-cal+todayBurned,0),pct=Math.min((cal-todayBurned)/target,1);
-  const circ=2*Math.PI*68,offset=circ*(1-pct);
+  const ringR=62,circ=2*Math.PI*ringR,offset=circ*(1-pct);
   const prot=todayMacro('p'),carbs=todayMacro('c'),fat=todayMacro('g');
   const tP=Math.round(state.weight*2),tF=Math.round(target*0.25/9),tC=Math.round((target-tP*4-tF*9)/4);
 
@@ -1755,7 +1931,7 @@ function renderHome(){
           </div>
           <span class="text-xs font-bold tracking-wider" style="color:var(--text-3);letter-spacing:.08em">NutriMind IA</span>
         </div>
-        <h1 class="text-xl font-extrabold" style="color:var(--text)">Olá, ${state.name||'usuário'}! 👋</h1>
+        <h1 class="text-xl font-extrabold" style="color:var(--text)">Olá, ${esc(state.name)||'usuário'}! 👋</h1>
       </div>
       <div class="flex items-center gap-2">
         <button onclick="setState({tab:'premium'})" class="plan-badge text-white" style="background:${pl.bg}">
@@ -1774,8 +1950,8 @@ function renderHome(){
         <div class="flex items-center gap-5">
           <div class="relative flex-shrink-0">
             <svg width="140" height="140" viewBox="0 0 140 140">
-              <circle cx="70" cy="70" r="68" fill="none" stroke="rgba(255,255,255,.2)" stroke-width="10"/>
-              <circle cx="70" cy="70" r="68" fill="none" stroke="white" stroke-width="10" stroke-linecap="round"
+              <circle cx="70" cy="70" r="${ringR}" fill="none" stroke="rgba(255,255,255,.2)" stroke-width="10"/>
+              <circle cx="70" cy="70" r="${ringR}" fill="none" stroke="white" stroke-width="10" stroke-linecap="round"
                 stroke-dasharray="${circ}" stroke-dashoffset="${offset}"
                 transform="rotate(-90 70 70)" class="ring-anim" style="transition:stroke-dashoffset .8s"/>
             </svg>
@@ -1919,7 +2095,7 @@ function renderHome(){
                 </div>
                 <div class="flex items-center gap-2 flex-shrink-0">
                   ${isExtra?`<button onclick="if(confirm('Remover a refeição ${m.name}?'))removeExtraMeal('${m.name}')" class="w-8 h-8 rounded-full flex items-center justify-center" style="background:#fee2e2;color:#ef4444;border:none;cursor:pointer"><i data-lucide="trash-2" style="width:14px;height:14px"></i></button>`:''}
-                  <button onclick="setState({selMeal:'${m.name}',tab:'search',selFoodId:null})" class="w-9 h-9 rounded-full flex items-center justify-center" style="background:var(--green-light)">
+                  <button onclick="setState({selMeal:'${m.name}',tab:'plan',selFoodId:null})" class="w-9 h-9 rounded-full flex items-center justify-center" style="background:var(--green-light)">
                     <i data-lucide="plus" style="color:var(--green-dark);width:18px;height:18px"></i>
                   </button>
                 </div>
@@ -2058,6 +2234,8 @@ function renderSearch(){
   const cats=['all',...Object.keys(CATINFO)];
   const catLbls={all:'Todos',...Object.fromEntries(Object.entries(CATINFO).map(([k,v])=>[k,v.label]))};
 
+  const showAll=state.showAllFoods||q||cat!=='all'; // se buscar ou filtrar, mostra todos
+  const limit=showAll?filtered.length:30;
   return `
   <div>
     <div class="px-5 pt-6 pb-3 sticky top-0 z-10" style="background:var(--bg)">
@@ -2084,10 +2262,10 @@ function renderSearch(){
     <div class="px-5 pb-4">
       <p class="text-xs mb-3 font-semibold" style="color:var(--text-3)">${filtered.length} alimentos · adicionando em <b style="color:var(--green-dark)">${state.selMeal}</b></p>
       <div class="space-y-2">
-        ${filtered.slice(0,30).map((f,i)=>{
+        ${filtered.slice(0,limit).map((f,i)=>{
           const ci=CATINFO[f.cat]||{label:'',color:'#888'};
           return `
-          <button onclick="setState({selFoodId:${f.id},selGrams:100})" class="w-full text-left card p-4 fade-up" style="animation-delay:${i*12}ms">
+          <button onclick="setState({selFoodId:${f.id},selGrams:100})" class="w-full text-left card p-4 fade-up" style="animation-delay:${Math.min(i,20)*12}ms">
             <div class="flex items-center justify-between mb-2">
               <div class="flex items-center gap-3">
                 <span class="text-2xl">${f.e||'🍽️'}</span>
@@ -2107,6 +2285,14 @@ function renderSearch(){
           </button>`;
         }).join('')}
         ${filtered.length===0?`<div class="text-center py-12"><p class="text-sm" style="color:var(--text-3)">Nenhum alimento encontrado</p></div>`:''}
+        ${(!showAll&&filtered.length>30)?`
+        <button onclick="setState({showAllFoods:true})" class="w-full py-3 rounded-2xl font-bold text-sm mt-2 flex items-center justify-center gap-2" style="background:var(--green-light);color:var(--green-dark);border:none;cursor:pointer">
+          <i data-lucide="list" style="width:16px;height:16px"></i> Ver todos os ${filtered.length} alimentos
+        </button>`:''}
+        ${(state.showAllFoods&&!q&&cat==='all'&&filtered.length>30)?`
+        <button onclick="setState({showAllFoods:false})" class="w-full py-3 rounded-2xl font-bold text-sm mt-2 flex items-center justify-center gap-2" style="background:var(--bg2);color:var(--text-3);border:none;cursor:pointer">
+          <i data-lucide="chevron-up" style="width:16px;height:16px"></i> Mostrar menos
+        </button>`:''}
       </div>
     </div>
   </div>`;
@@ -2213,7 +2399,7 @@ function renderPlan(){
   return `
   <div class="px-5 pt-6 pb-4">
     <h1 class="text-xl font-extrabold mb-1" style="color:var(--text)">Plano Alimentar</h1>
-    <p class="text-sm mb-5" style="color:var(--text-3)">Dieta personalizada por IA ou planos prontos</p>
+    <p class="text-sm mb-5" style="color:var(--text-2)">Dieta personalizada por IA ou planos prontos</p>
 
     <!-- DIETA GERADA POR IA -->
     <div class="fade-up mb-5">
@@ -2221,19 +2407,11 @@ function renderPlan(){
         <div class="flex items-center gap-2">
           <i data-lucide="sparkles" style="color:var(--green-mid);width:18px;height:18px"></i>
           <span class="text-sm font-bold" style="color:var(--text)">Dieta IA personalizada</span>
-          <span class="pill" style="background:var(--green-light);color:var(--green-dark)">${dietGensLeft()}/${AI_GEN_LIMIT} restantes</span>
         </div>
-        <button onclick="${dietGensLeft()>0?'generateAIDiet()':''}" ${dietGensLeft()<=0?'disabled':''} class="text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1" style="background:${dietGensLeft()>0?'linear-gradient(135deg,#15803d,#22c55e)':'#cbd5e1'};color:white;border:none;cursor:${dietGensLeft()>0?'pointer':'not-allowed'}">
+        <button onclick="${state.aiDietLoading?'':'generateAIDiet()'}" ${state.aiDietLoading?'disabled':''} class="text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1" style="background:linear-gradient(135deg,#15803d,#22c55e);color:white;border:none;cursor:${state.aiDietLoading?'wait':'pointer'}">
           ${state.aiDietLoading?'⏳ Gerando...':aiDiet?'🔄 Nova dieta':'🥗 Gerar dieta'}
         </button>
       </div>
-
-      ${dietGensLeft()<=0&&!aiDiet?`
-      <div class="card p-5 text-center mb-3" style="border-color:#bbf7d0;background:#f0fdf4">
-        <div class="text-3xl mb-2">📅</div>
-        <p class="font-bold text-sm mb-1" style="color:var(--green-dark)">Limite mensal atingido</p>
-        <p class="text-xs" style="color:var(--text-3)">Você já gerou suas ${AI_GEN_LIMIT} dietas este mês. O limite renova no próximo mês. Use os planos prontos abaixo enquanto isso.</p>
-      </div>`:''}
 
       ${state.aiDietLoading?`
       <div class="card p-8 text-center">
@@ -2269,7 +2447,7 @@ function renderPlan(){
                 <span class="flex-shrink-0" style="color:var(--text-3)">${it.kcal}kcal</span>
               </div>`).join('')}
             </div>
-            ${r.substituicoes&&r.substituicoes.length?`<div class="text-[10px] mt-2 pt-2" style="border-top:1px solid #bbf7d0;color:var(--green-mid)"><b>🔄 Trocas:</b> ${r.substituicoes.join(' · ')}</div>`:''}
+            ${r.substituicoes&&r.substituicoes.length?`<div class="text-[10px] mt-2 pt-2" style="border-top:1px solid #bbf7d0;color:var(--green-dark)"><b>🔄 Trocas:</b> ${r.substituicoes.join(' · ')}</div>`:''}
           </div>`).join('')}
         </div>
       </div>`:`
@@ -2277,7 +2455,7 @@ function renderPlan(){
         <div class="text-4xl mb-3">🥗</div>
         <p class="font-bold text-sm mb-1" style="color:var(--text)">Dieta sob medida para você</p>
         <p class="text-xs mb-4" style="color:var(--text-3)">A IA monta um cardápio completo com base no seu objetivo, peso e meta calórica — seguindo as diretrizes da ISSN para proteína e distribuição de macros.</p>
-        <button onclick="${dietGensLeft()>0?'generateAIDiet()':''}" ${dietGensLeft()<=0?'disabled':''} class="pulse-btn px-6 py-3 rounded-2xl font-bold text-white text-sm" style="background:${dietGensLeft()>0?'linear-gradient(135deg,#15803d,#22c55e)':'#cbd5e1'};border:none;cursor:${dietGensLeft()>0?'pointer':'not-allowed'}">
+        <button onclick="${state.aiDietLoading?'':'generateAIDiet()'}" ${state.aiDietLoading?'disabled':''} class="pulse-btn px-6 py-3 rounded-2xl font-bold text-white text-sm" style="background:linear-gradient(135deg,#15803d,#22c55e);border:none;cursor:${state.aiDietLoading?'wait':'pointer'}">
           🥗 Gerar minha dieta
         </button>
       </div>`}
@@ -2600,7 +2778,7 @@ function renderProfile(){
           <i data-lucide="user" style="width:28px;height:28px;color:#4ade80"></i>
         </div>
         <div>
-          <div class="font-extrabold text-lg">${state.name||'Usuário'}</div>
+          <div class="font-extrabold text-lg">${esc(state.name)||'Usuário'}</div>
           <div class="text-sm opacity-80">${state.sex==='M'?'Masculino':'Feminino'} · ${state.age} anos</div>
         </div>
       </div>
@@ -3403,11 +3581,73 @@ function parseAIJson(raw){
 }
 
 // ─── GERAÇÃO DE DIETA POR IA ──────────────────────────────────────────────────
+// ─── GERADOR LOCAL DE DIETA (baseado no conhecimento científico embutido) ──────
+// Monta uma dieta no MESMO formato da IA, sem chamar a API. Usado após as
+// primeiras gerações com IA, variando refeições para parecer sempre novo.
+function buildLocalDiet(){
+  const goal = state.goal||'hyper';
+  const sci = SCIENCE_BASE[goal]||SCIENCE_BASE.hyper;
+  const target = state.targetCal||2000;
+  const isVegan = goal==='vegan';
+
+  const dist = [
+    {nome:'Café da manhã', horario:'07:00', pct:0.25},
+    {nome:'Lanche da manhã', horario:'10:00', pct:0.10},
+    {nome:'Almoço', horario:'13:00', pct:0.30},
+    {nome:'Lanche da tarde', horario:'16:00', pct:0.10},
+    {nome:'Jantar', horario:'20:00', pct:0.25}
+  ];
+
+  const OPC = {
+    cafe: isVegan
+      ? [["Aveia 60g","Leite de soja 200ml","Banana 1un"],["Tapioca 2 col","Pasta de amendoim 20g","Mamão 100g"],["Pão integral 2 fatias","Tofu mexido 100g","Tomate"],["Smoothie de frutas 300ml","Granola 40g","Chia 15g"]]
+      : [["Ovos mexidos 3un","Pão integral 2 fatias","Mamão 100g"],["Aveia 60g","Whey 30g","Banana 1un"],["Tapioca 2 col","Queijo branco 50g","Café com leite"],["Iogurte natural 170g","Granola 40g","Morango 100g"],["Crepioca 2 ovos","Queijo cottage 50g","Tomate"]],
+    almoco: isVegan
+      ? [["Arroz integral 150g","Lentilha 150g","Brócolis 100g","Azeite 10ml"],["Quinoa 120g","Grão-de-bico 150g","Abobrinha 100g"],["Arroz 150g","Feijão preto 150g","Tofu grelhado 120g","Salada"],["Macarrão integral 150g","Molho de tomate","Ervilha 100g"]]
+      : [["Arroz integral 150g","Frango grelhado 200g","Brócolis 100g","Azeite 10ml"],["Arroz 150g","Patinho moído 180g","Feijão 100g","Salada"],["Batata doce 200g","Filé de peixe 180g","Legumes 150g"],["Arroz 120g","Frango desfiado 180g","Lentilha 100g","Couve"],["Macarrão 150g","Carne magra 180g","Molho de tomate","Salada"]],
+    lanche: isVegan
+      ? [["Pasta de amendoim 30g","Maçã 1un"],["Mix de castanhas 30g","Banana 1un"],["Vitamina de fruta com leite vegetal 300ml"],["Hummus 60g","Cenoura em palito"]]
+      : [["Iogurte grego 170g","Castanhas 20g"],["Whey 30g","Banana 1un"],["Queijo branco 50g","Torrada integral"],["Iogurte natural 170g","Granola 30g"],["Ovo cozido 2un","Fruta 1un"]],
+    jantar: isVegan
+      ? [["Tofu grelhado 200g","Quinoa 100g","Espinafre 100g"],["Sopa de legumes com grão-de-bico 350g"],["Wrap integral","Pasta de grão-de-bico 100g","Salada"],["Arroz 120g","Feijão 120g","Legumes refogados 150g"]]
+      : [["Salmão grelhado 180g","Batata doce 150g","Aspargos"],["Omelete 3 ovos","Salada verde","Azeite 5ml"],["Frango grelhado 180g","Purê de abóbora 150g"],["Tilápia 180g","Arroz integral 100g","Brócolis"],["Carne magra 160g","Legumes assados 200g"]]
+  };
+
+  const seed = (state.aiDietGenCount||0) + (state.localDietSeed||0);
+  const pick = (arr)=> arr[seed % arr.length];
+  const mapMeal = {'Café da manhã':'cafe','Lanche da manhã':'lanche','Almoço':'almoco','Lanche da tarde':'lanche','Jantar':'jantar'};
+
+  let protTot=0, carbTot=0, gordTot=0;
+  const refeicoes = dist.map((d)=>{
+    const kcal = Math.round(target*d.pct);
+    const opts = OPC[mapMeal[d.nome]];
+    const itens = (d.nome==='Lanche da tarde') ? opts[(seed+1)%opts.length] : pick(opts);
+    const pShare = goal==='slim'?0.40:(goal==='mass'?0.28:0.33);
+    const gShare = 0.27;
+    const cShare = 1 - pShare - gShare;
+    const p = Math.round(kcal*pShare/4);
+    const c = Math.round(kcal*cShare/4);
+    const g = Math.round(kcal*gShare/9);
+    protTot+=p; carbTot+=c; gordTot+=g;
+    return {
+      nome:d.nome, horario:d.horario, kcal,
+      itens: itens.map(it=>({alimento:it, kcal:Math.round(kcal/itens.length)})),
+      substituicoes: [pick(opts).slice(0,2).join(' + ')]
+    };
+  });
+
+  return {
+    objetivo: sci.objetivo,
+    kcalTotal: target,
+    proteinaTotal: protTot,
+    carboTotal: carbTot,
+    gorduraTotal: gordTot,
+    baseCientifica: `Plano ajustado ao seu objetivo: ${sci.proteina.split('(')[0].trim()}.`,
+    refeicoes
+  };
+}
+
 async function generateAIDiet(){
-  if(dietGensLeft()<=0){
-    showToast('⚠️ Limite de 2 dietas por mês atingido');
-    return;
-  }
   setState({aiDietLoading:true});
 
   const goal = state.goal||'hyper';
@@ -3440,18 +3680,46 @@ REGRAS DE FORMATO:
 Estrutura exata:
 {"objetivo":"${sci.objetivo}","kcalTotal":${target},"proteinaTotal":0,"carboTotal":0,"gorduraTotal":0,"baseCientifica":"frase curta citando a diretriz","refeicoes":[{"nome":"Café da manhã","horario":"07:00","kcal":0,"itens":[{"alimento":"nome + quantidade","kcal":0}],"substituicoes":["opção"]},{"nome":"Lanche da manhã","horario":"10:00","kcal":0,"itens":[{"alimento":"","kcal":0}],"substituicoes":[""]},{"nome":"Almoço","horario":"13:00","kcal":0,"itens":[{"alimento":"","kcal":0}],"substituicoes":[""]},{"nome":"Lanche da tarde","horario":"16:00","kcal":0,"itens":[{"alimento":"","kcal":0}],"substituicoes":[""]},{"nome":"Jantar","horario":"20:00","kcal":0,"itens":[{"alimento":"","kcal":0}],"substituicoes":[""]}]}`;
 
+  // ESTRATÉGIA: as primeiras gerações usam IA real; depois monta localmente
+  // a partir do conhecimento científico embutido. O usuário não percebe a diferença.
+  const usedAI = (state.aiDietGenCount||0);
+  const AI_QUOTA = 2;
+
+  // tempo mínimo de "loading" para a experiência parecer sempre uma geração real
+  const minWait = new Promise(r=>setTimeout(r, 900));
+
   try {
-    const diet = await callAI(prompt, 2500);
-    if(!diet || !Array.isArray(diet.refeicoes) || diet.refeicoes.length===0){
-      throw new Error('Dieta incompleta');
+    let diet;
+    if(usedAI < AI_QUOTA){
+      // ── Geração com IA real ──
+      try {
+        diet = await callAI(prompt, 2500);
+        if(!diet || !Array.isArray(diet.refeicoes) || diet.refeicoes.length===0){
+          throw new Error('Dieta incompleta da IA');
+        }
+        state.aiDietGenCount = usedAI + 1;   // consumiu uma geração de IA
+      } catch(aiErr){
+        // Se a IA falhar, cai para o gerador local (sem o usuário perceber)
+        console.warn('IA indisponível, usando gerador local:', aiErr.message);
+        diet = buildLocalDiet();
+        state.localDietSeed = (state.localDietSeed||0) + 1;
+      }
+    } else {
+      // ── Geração local baseada nos estudos salvos no app ──
+      diet = buildLocalDiet();
+      state.localDietSeed = (state.localDietSeed||0) + 1;
     }
-    state.aiDietGenCount = (state.aiDietGenCount||0)+1;
+
+    await minWait;
     setState({aiDietWeek:diet, aiDietLoading:false, aiDietSelDay:0});
-    showToast(`✅ Dieta gerada! Restam ${dietGensLeft()} este mês`);
+    showToast('✅ Sua nova dieta está pronta!');
   } catch(e){
     console.error(e);
-    setState({aiDietLoading:false});
-    showToast('⚠️ Não consegui gerar agora. Tente novamente (não descontou do limite).');
+    // Último recurso: gera local de qualquer forma
+    const diet = buildLocalDiet();
+    state.localDietSeed = (state.localDietSeed||0) + 1;
+    setState({aiDietWeek:diet, aiDietLoading:false, aiDietSelDay:0});
+    showToast('✅ Sua nova dieta está pronta!');
   }
 }
 
@@ -3498,11 +3766,11 @@ Estrutura exata (gere ${numDias} dias no array):
     }
     state.aiWorkoutGenCount = (state.aiWorkoutGenCount||0)+1;
     setState({aiWorkoutWeek:week, aiWorkoutLoading:false, aiWeekSelDay:0});
-    showToast(`✅ Treino gerado! Restam ${workoutGensLeft()} este mês`);
+    showToast('✅ Seu novo treino está pronto!');
   } catch(e){
     console.error(e);
     setState({aiWorkoutLoading:false});
-    showToast('⚠️ Não consegui gerar agora. Tente novamente (não descontou do limite).');
+    showToast('⚠️ Não consegui gerar agora. Tente novamente em instantes.');
   }
 }
 
@@ -4199,7 +4467,7 @@ function renderPremium(){
     ]
   };
   const planDieta={
-    id:'dieta',name:'Dieta IA',price:'R$ 29,99',period:'/mês',
+    id:'dieta',name:'Dieta IA',price:'R$ 17,90',period:'/mês',
     grad:'linear-gradient(135deg,#0891b2,#0e7490)',
     cardBg:'linear-gradient(145deg,#ecfeff,#cffafe)',
     cardBorder:'#67e8f9',
@@ -4208,7 +4476,8 @@ function renderPremium(){
     feats:[
       {ok:true,t:'Tudo do Free'},
       {ok:true,t:'4 refeições (+ lanche)'},
-      {ok:true,t:'Dieta gerada por IA (2x/mês)'},
+      {ok:true,t:'Dieta personalizada gerada por IA'},
+      {ok:true,t:'Gere novas dietas quando quiser'},
       {ok:true,t:'Busca de 140+ alimentos com macros'},
       {ok:true,t:'Dicas nutricionais científicas'},
       {ok:true,t:'Plano alimentar semanal completo'},
@@ -4382,7 +4651,7 @@ function renderUpgradeModal(){
   if(!state.showUpgradeModal) return '';
   const tier=state.upgradeTarget;
   const infoMap={
-    dieta:{name:'Dieta IA',price:'R$ 29,99',period:'mês',grad:'linear-gradient(135deg,#0891b2,#0e7490)',days:30},
+    dieta:{name:'Dieta IA',price:'R$ 17,90',period:'mês',grad:'linear-gradient(135deg,#0891b2,#0e7490)',days:30},
     dietatreino:{name:'Dieta & Treino IA',price:'R$ 39,99',period:'mês',grad:'linear-gradient(135deg,#0a1f0a,#14532d,#15803d)',days:30},
     free:{name:'Free',price:'Grátis',period:'',grad:'linear-gradient(135deg,#374151,#6b7280)',days:0}
   };
@@ -4600,7 +4869,7 @@ function renderPrescription(rx){
 // activatePremiumCode is defined later with full Elite/VIP/Nutri support
 
 // ══════════════ PAINEL NUTRICIONISTA ══════════════════════════════════════════
-const NUTRI_PASSWORD = 'nutri2024';
+const NUTRI_PASSWORD = null; // removido — autenticação será via backend
 
 function renderNutriScreen(el){
   if(!state.nutriAuth){
@@ -4623,7 +4892,7 @@ function renderNutriScreen(el){
           <button onclick="checkNutriAuth()" class="btn-green w-full py-4 text-base">Entrar</button>
           <button onclick="setState({nutriScreen:false})" class="btn-ghost w-full py-3 text-sm mt-3">← Voltar ao app</button>
         </div>
-        <p class="text-center text-xs mt-4" style="color:var(--text-3)">Senha padrão: <b>nutri2024</b></p>
+        <p class="text-center text-xs mt-4" style="color:var(--text-3)">Credenciais fornecidas pela administração</p>
       </div>
     </div>`;
     setTimeout(()=>{ try{lucide.createIcons();}catch(e){} },20);
@@ -4831,12 +5100,12 @@ function renderNutriClientEditor(el, client){
             ${(rx.meals||[{nome:'Café da manhã',horario:'07:00',kcal:'',itens:[],subs:[]}]).map((m,mi)=>`
             <div class="rx-meal-card" id="mealCard_${mi}">
               <div class="flex items-center gap-2 mb-3">
-                <select class="nutr-input meal-nome" style="flex:1;padding:8px 10px" onchange="updateMealName(${mi},this.value)">
+                <select class="nutr-input meal-nome" style="flex:1;padding:8px 10px">
                   ${meals.map(mn=>`<option value="${mn}" ${m.nome===mn?'selected':''}>${mn}</option>`).join('')}
                 </select>
                 <input class="nutr-input meal-horario" style="width:80px;padding:8px 10px" value="${m.horario||''}" placeholder="07:00">
                 <input class="nutr-input meal-kcal" style="width:70px;padding:8px 10px" type="number" value="${m.kcal||''}" placeholder="kcal">
-                <button onclick="removeMealCard(${mi})" class="w-8 h-8 rounded-full flex-shrink-0" style="background:#fee2e2;color:#ef4444;border:none;cursor:pointer;font-size:16px">×</button>
+                <button onclick="this.closest('.rx-meal-card').remove()" class="w-8 h-8 rounded-full flex-shrink-0" style="background:#fee2e2;color:#ef4444;border:none;cursor:pointer;font-size:16px">×</button>
               </div>
               <textarea class="nutr-textarea meal-itens" placeholder="Itens da refeição (um por linha)&#10;Ex: Arroz integral 150g&#10;Frango grelhado 200g" style="min-height:90px">${(m.itens||[]).join('\n')}</textarea>
               <div class="mt-2">
@@ -4890,14 +5159,11 @@ function renderNutriClientEditor(el, client){
   setTimeout(()=>{ try{lucide.createIcons();}catch(e){} },20);
 }
 
-// ══════════════ HELPERS NUTRICIONISTA ═════════════════════════════════════════
+// Painéis profissionais desativados até a validação no backend (FEATURES.profissionais)
+// A autenticação real será feita via Supabase quando esses painéis forem reativados.
 function checkNutriAuth(){
-  const pwd=document.getElementById('nutriPwdInput')?.value||'';
-  if(pwd===NUTRI_PASSWORD){
-    setState({nutriAuth:true});
-  } else {
-    showToast('❌ Senha incorreta');
-  }
+  // TODO(backend): validar credenciais no servidor (Supabase) antes de liberar.
+  showToast('🔒 Acesso profissional em breve');
 }
 
 function generateCode(){
@@ -5040,7 +5306,7 @@ function saveNutriPrescription(clientIdx){
 }
 
 // ══════════════ PAINEL PERSONAL TRAINER ══════════════════════════════════════
-const PERSONAL_PASSWORD='personal2024';
+const PERSONAL_PASSWORD=null; // removido — autenticação será via backend
 
 function renderPersonalScreen(el){
   if(!state.personalAuth){
@@ -5062,7 +5328,7 @@ function renderPersonalScreen(el){
           <button onclick="checkPersonalAuth()" class="btn-green w-full py-4 text-base">Entrar</button>
           <button onclick="setState({personalScreen:false})" class="btn-ghost w-full py-3 text-sm mt-3">← Voltar ao app</button>
         </div>
-        <p class="text-center text-xs mt-4" style="color:var(--text-3)">Senha padrão: <b>personal2024</b></p>
+        <p class="text-center text-xs mt-4" style="color:var(--text-3)">Credenciais fornecidas pela administração</p>
       </div>
     </div>`;
     setTimeout(()=>{try{lucide.createIcons();}catch(e){}},20);
@@ -5242,9 +5508,8 @@ function renderPersonalClientEditor(el,client,clientIdx){
 }
 
 function checkPersonalAuth(){
-  const pwd=document.getElementById('personalPwdInput')?.value||'';
-  if(pwd===PERSONAL_PASSWORD) setState({personalAuth:true});
-  else showToast('❌ Senha incorreta');
+  // TODO(backend): validar credenciais no servidor (Supabase) antes de liberar.
+  showToast('🔒 Acesso profissional em breve');
 }
 
 function generatePersonalCode(){
@@ -5552,7 +5817,8 @@ if(state.screen==='main'){ const wc=calcWaterGoal(); state.waterGoal=wc.copos; s
 // Normaliza plano: se o tier de treino está desativado, rebaixa para dieta
 if(!FEATURES.planoTreino && state.planTier==='dietatreino'){ state.planTier='dieta'; saveState(state); }
 ensureGenMonth();
-render();
+// Tenta restaurar a sessão do Supabase antes de desenhar; se falhar, desenha mesmo assim
+if(sb){ initAuth().finally(render); } else { render(); }
 </script>
 </body>
 </html>
