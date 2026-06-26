@@ -448,6 +448,15 @@
         border:1px solid rgba(255,255,255,.12);
         padding-left:0;
         padding-right:0;
+        display:flex;
+        flex-direction:column;
+      }
+      /* Garante que o conteúdo interno role dentro do frame (Safari/Mac) */
+      #app > *:not(.nav-bar):not(.modal-ov){
+        flex:1 1 auto;
+        min-height:0;
+        overflow-y:auto;
+        -webkit-overflow-scrolling:touch;
       }
       /* Nav bar e modais grudam no frame, não na janela */
       .nav-bar{ position:absolute; }
