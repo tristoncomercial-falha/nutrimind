@@ -476,6 +476,11 @@ const sb = (window.supabase && window.supabase.createClient)
   : null;
 let currentUser = null;
 
+// ─── CONFIGURAÇÃO MERCADO PAGO ──────────────────────────────────────────────
+// URL do worker de pagamento (criar assinatura + webhook). Troque pela sua quando criar.
+const PAY_WORKER_URL = "https://nutrimind-pagamento.tristoncomercial.workers.dev";
+const MP_PUBLIC_KEY = "TEST-8f12a106-a1c1-4641-991a-168f0d910d0e";
+
 // ─── BANCO DE ALIMENTOS (60 itens) ───────────────────────────────────────────
 const FOODS=[
   {id:1,n:"Frango grelhado",cal:165,p:31,c:0,g:3.6,cat:"prot",e:"🍗"},
@@ -1203,7 +1208,55 @@ function calcIMC(){
   return{imc:imc.toFixed(1),cls,pesoIdealMin:(18.5*h*h).toFixed(1),pesoIdealMax:(24.9*h*h).toFixed(1)};
 }
 
-function setState(patch){Object.assign(state,patch);saveState(state);syncToCloud();render();}
+function setState(patch){
+  // Detecta navegação relevante para registrar no histórico do navegador
+  const navKeys=['tab','screen','selFoodId','showJunkModal','showAddMealModal','showWaterModal','showWeightModal','showActModal','showUpgradeModal'];
+  const isNav = navKeys.some(k=>k in patch && patch[k]!==state[k]);
+  Object.assign(state,patch);
+  saveState(state);
+  syncToCloud();
+  render();
+  if(isNav && !_navLock){ navPush('nav'); }
+}
+
+// ─── NAVEGAÇÃO PELO BOTÃO VOLTAR DO NAVEGADOR ───────────────────────────────
+// Registra mudanças de tela/aba/modal no histórico, para o botão "voltar"
+// do navegador funcionar dentro do app em vez de fechá-lo.
+let _navLock=false;
+function navPush(label){
+  try{ history.pushState({nm:label,t:Date.now()}, '', location.href); }catch(e){}
+}
+// setNav: como setState, mas também empilha no histórico do navegador
+function setNav(patch){
+  setState(patch);
+  navPush('nav');
+}
+// Fecha o que estiver aberto (modais) ou volta de tela, na ordem certa
+function handleBack(){
+  // 1. Modais abertos têm prioridade — fecha o primeiro encontrado
+  const modais=['showJunkModal','showAddMealModal','showWaterModal','showWeightModal','showActModal','showUpgradeModal','showAllFoods'];
+  for(const m of modais){
+    if(state[m]){ setState({[m]:false}); return true; }
+  }
+  // 2. Tela de detalhe de alimento aberta
+  if(state.selFoodId){ setState({selFoodId:null}); return true; }
+  // 3. Telas secundárias voltam para a home
+  if(state.screen==='main' && state.tab && state.tab!=='home'){
+    setState({tab:'home'}); return true;
+  }
+  if(state.tab==='progress'||state.tab==='profile'){ setState({tab:'home'}); return true; }
+  // 4. Já está na home — deixa o navegador sair normalmente
+  return false;
+}
+window.addEventListener('popstate', (e)=>{
+  _navLock=true;
+  const tratou=handleBack();
+  _navLock=false;
+  // Se tratou internamente, re-empilha para continuar capturando o "voltar"
+  if(tratou){ navPush('nav'); }
+});
+// Empilha um estado inicial assim que o app carrega (base para o voltar)
+function initHistory(){ try{ history.replaceState({nm:'base'}, '', location.href); navPush('app'); }catch(e){} }
 
 function showToast(msg){
   const t=document.getElementById('toast-el');
@@ -1466,10 +1519,11 @@ function authNext(forceOnboarding){
 
 function traduzErro(msg){
   if(/Invalid login credentials/i.test(msg)) return 'E-mail ou senha incorretos';
-  if(/already registered|already been registered/i.test(msg)) return 'Este e-mail já tem conta';
+  if(/already registered|already been registered|already exists/i.test(msg)) return 'Este e-mail já tem conta. Tente entrar.';
   if(/Email not confirmed/i.test(msg)) return 'Confirme seu e-mail antes de entrar';
-  if(/rate limit|too many/i.test(msg)) return 'Muitas tentativas. Aguarde um momento';
-  if(/network|fetch/i.test(msg)) return 'Sem conexão com a internet';
+  if(/email rate limit|over_email_send/i.test(msg)) return 'Limite de e-mails atingido. Aguarde 1 hora ou desative a confirmação de e-mail no Supabase.';
+  if(/rate limit|too many|429/i.test(msg)) return 'Muitas tentativas seguidas. Aguarde alguns minutos e tente de novo.';
+  if(/network|fetch|failed to fetch/i.test(msg)) return 'Sem conexão com a internet';
   if(/password/i.test(msg)) return 'Senha inválida (mínimo 6 caracteres)';
   return msg;
 }
@@ -1599,6 +1653,10 @@ async function initAuth(){
       if(state.screen==='login'){
         state.authed=true;
         state.screen=(state.goal&&state.tdee>0)?'main':'onboarding';
+      }
+      // Se voltou do pagamento, recarrega o plano e avisa
+      if(location.search.includes('payment') || document.referrer.includes('mercadopago')){
+        setTimeout(verificarPlanoAtivo, 1500);
       }
     }
     sb.auth.onAuthStateChange((event, session)=>{
@@ -4711,33 +4769,64 @@ function renderUpgradeModal(){
       +'</div>'
       +(tier!=='free'?
         '<div class="rounded-xl p-4 mb-5" style="background:var(--bg2);border:1.5px solid var(--border)">'
-          +'<p class="text-xs font-bold mb-3" style="color:var(--text-3)">SIMULAÇÃO DE PAGAMENTO</p>'
-          +'<input placeholder="Número do cartão" class="nutr-input w-full mb-2">'
-          +'<div class="grid grid-cols-2 gap-2 mb-2"><input placeholder="MM/AA" class="nutr-input"><input placeholder="CVV" class="nutr-input"></div>'
-          +'<input placeholder="Nome no cartão" class="nutr-input w-full">'
+          +'<div class="flex items-center gap-2 mb-2">'
+            +'<span style="font-size:20px">🔒</span>'
+            +'<p class="text-xs font-bold" style="color:var(--text)">Pagamento seguro via Mercado Pago</p>'
+          +'</div>'
+          +'<p class="text-xs" style="color:var(--text-3)">Pague com Pix, cartão ou boleto. Você será levado para o ambiente seguro do Mercado Pago.</p>'
         +'</div>'
       :'')
       +'<button onclick="confirmUpgrade()" class="w-full py-4 rounded-2xl font-extrabold text-sm text-white" style="background:'+info.grad+';border:none;cursor:pointer">'
-        +(tier==='free'?'Confirmar':'✓ Confirmar assinatura')
+        +(tier==='free'?'Confirmar':'Ir para o pagamento →')
       +'</button>'
       +'<button onclick="setState({showUpgradeModal:false})" class="btn-ghost w-full py-3 text-sm mt-3">Cancelar</button>'
     +'</div>'
   +'</div>';
 }
 
-function confirmUpgrade(){
+async function confirmUpgrade(){
   const tier=state.upgradeTarget;
-  const daysMap={dieta:30,dietatreino:30,free:0};
-  const days=daysMap[tier]||0;
-  const exp=new Date();
-  if(days>0) exp.setDate(exp.getDate()+days);
-  setState({
-    planTier:tier,
-    planExpiry:days>0?exp.toISOString():null,
-    showUpgradeModal:false,
-    premiumActive:false
-  });
-  showToast(tier==='free'?'Plano alterado para Free':'✅ Plano ativado com sucesso!');
+
+  // Plano grátis: muda na hora (não envolve pagamento)
+  if(tier==='free'){
+    setState({planTier:'free',planExpiry:null,showUpgradeModal:false,premiumActive:false});
+    showToast('Plano alterado para Free');
+    return;
+  }
+
+  // Plano pago: precisa estar logado (o pagamento se liga à conta)
+  if(!currentUser){
+    setState({showUpgradeModal:false});
+    showToast('Crie sua conta antes de assinar');
+    setState({screen:'login',authMode:'signup'});
+    return;
+  }
+
+  showToast('Preparando pagamento...');
+  try {
+    const resp = await fetch(PAY_WORKER_URL + '/criar-assinatura', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ email: currentUser.email, userId: currentUser.id })
+    });
+    const data = await resp.json();
+    if(!resp.ok || !data.init_point){
+      throw new Error(data.error || 'Falha ao criar assinatura');
+    }
+    // Redireciona para o checkout do Mercado Pago (Pix, cartão ou boleto)
+    window.location.href = data.init_point;
+  } catch(e){
+    showToast('❌ '+(e.message||'Erro no pagamento'));
+  }
+}
+
+// Verifica no Supabase se o plano já foi ativado (após voltar do pagamento)
+async function verificarPlanoAtivo(){
+  if(!currentUser || !sb) return;
+  await carregarPerfil();   // recarrega o plan_tier do servidor
+  if(state.planTier && state.planTier!=='free'){
+    showToast('✅ Assinatura ativa! Bem-vindo ao Dieta IA');
+  }
 }
 
 function activatePremiumCode(){
@@ -5858,6 +5947,8 @@ if(state.screen==='main'){ const wc=calcWaterGoal(); state.waterGoal=wc.copos; s
 // Normaliza plano: se o tier de treino está desativado, rebaixa para dieta
 if(!FEATURES.planoTreino && state.planTier==='dietatreino'){ state.planTier='dieta'; saveState(state); }
 ensureGenMonth();
+// Inicializa o histórico de navegação (botão voltar do navegador)
+initHistory();
 // Tenta restaurar a sessão do Supabase antes de desenhar; se falhar, desenha mesmo assim
 if(sb){ initAuth().finally(render); } else { render(); }
 </script>
