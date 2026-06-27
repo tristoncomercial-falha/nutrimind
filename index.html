@@ -1510,6 +1510,13 @@ function renderLogin(el){
         <span onclick="skipLogin()" class="text-xs" style="color:var(--text-3);cursor:pointer;text-decoration:underline">Entrar sem conta (modo local)</span>
       </div>
 
+      <!-- Acesso demo (apresentação) -->
+      <div class="text-center mt-3">
+        <button onclick="demoLogin()" class="text-xs font-bold" style="background:var(--green-mid);color:#fff;border:none;padding:8px 18px;border-radius:10px;cursor:pointer">
+          🎬 Ver demonstração (acesso completo)
+        </button>
+      </div>
+
       <p class="text-center text-[10px] mt-6 px-4" style="color:var(--text-3)">
         Ao continuar, você concorda com os Termos de Uso e a Política de Privacidade do NutriMind IA.
       </p>
@@ -1592,6 +1599,37 @@ async function doSocialLogin(provider){
 function skipLogin(){
   state.authed=false;
   authNext();
+}
+
+// Conta DEMO: entra direto com plano Dieta ativo e dados de exemplo,
+// para apresentar o app sem precisar criar conta nem pagar.
+function demoLogin(){
+  currentUser = null; // demo é local, não usa Supabase
+  Object.assign(state, {
+    authed: true,
+    screen: 'main',
+    tab: 'home',
+    name: 'Visitante Demo',
+    planTier: 'dieta',           // plano pago ativo (mostra recursos premium)
+    planExpiry: null,
+    premiumActive: false,
+    goal: 'slim',
+    sex: 'M',
+    age: 28,
+    height: 175,
+    weight: 78,
+    activity: 'moderate',
+    isDemo: true,
+  });
+  // Calcula metas reais com a função do app
+  try{
+    const r = calcTDEE();
+    state.tdee = r.tdee;
+    state.targetCal = r.targetCal;
+  }catch(e){ state.tdee=2450; state.targetCal=2100; }
+  saveState(state);
+  render();
+  showToast('🎬 Modo demonstração ativado');
 }
 
 async function doLogout(){
