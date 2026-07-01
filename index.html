@@ -1702,7 +1702,7 @@ async function initAuth(){
         state.screen=(state.goal&&state.tdee>0)?'main':'onboarding';
       }
       // Se voltou do pagamento, recarrega o plano e avisa
-      if(location.search.includes('payment') || document.referrer.includes('mercadopago')){
+      if(location.search.includes('payment') || document.referrer.includes('abacatepay') || document.referrer.includes('mercadopago')){
         setTimeout(verificarPlanoAtivo, 1500);
       }
     }
@@ -4818,9 +4818,9 @@ function renderUpgradeModal(){
         '<div class="rounded-xl p-4 mb-5" style="background:var(--bg2);border:1.5px solid var(--border)">'
           +'<div class="flex items-center gap-2 mb-2">'
             +'<span style="font-size:20px">🔒</span>'
-            +'<p class="text-xs font-bold" style="color:var(--text)">Pagamento seguro via Mercado Pago</p>'
+            +'<p class="text-xs font-bold" style="color:var(--text)">Pagamento seguro e criptografado</p>'
           +'</div>'
-          +'<p class="text-xs" style="color:var(--text-3)">Pague com Pix, cartão ou boleto. Você será levado para o ambiente seguro do Mercado Pago.</p>'
+          +'<p class="text-xs" style="color:var(--text-3)">Pague com cartão de crédito em um ambiente seguro. Cancele quando quiser.</p>'
         +'</div>'
       :'')
       +'<button onclick="confirmUpgrade()" class="w-full py-4 rounded-2xl font-extrabold text-sm text-white" style="background:'+info.grad+';border:none;cursor:pointer">'
@@ -4860,7 +4860,7 @@ async function confirmUpgrade(){
     if(!resp.ok || !data.init_point){
       throw new Error(data.error || 'Falha ao criar assinatura');
     }
-    // Redireciona para o checkout do Mercado Pago (Pix, cartão ou boleto)
+    // Redireciona para o checkout do AbacatePay (cartão de crédito)
     window.location.href = data.init_point;
   } catch(e){
     showToast('❌ '+(e.message||'Erro no pagamento'));
