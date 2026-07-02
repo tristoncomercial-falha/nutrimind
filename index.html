@@ -184,6 +184,11 @@
     /* ── ANIMAÇÕES SOFISTICADAS ──────────────────────────────── */
     @keyframes fadeUp{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:translateY(0)}}
     @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+    /* ── COMEMORAÇÃO PÓS-ASSINATURA ── */
+    @keyframes celebraPop{0%{opacity:0;transform:scale(.7)}100%{opacity:1;transform:scale(1)}}
+    @keyframes fadeOutCelebra{to{opacity:0}}
+    @keyframes confeteCai{0%{opacity:1;top:-10%}100%{opacity:.9;top:110%}}
+    #celebracao-ov .confete{position:absolute;top:-10%;border-radius:2px;animation-name:confeteCai;animation-timing-function:linear;animation-iteration-count:1}
     @keyframes slideLeft{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:translateX(0)}}
     @keyframes slideRight{from{opacity:0;transform:translateX(-30px)}to{opacity:1;transform:translateX(0)}}
     @keyframes scaleIn{from{opacity:0;transform:scale(.88)}to{opacity:1;transform:scale(1)}}
@@ -4870,10 +4875,67 @@ async function confirmUpgrade(){
 // Verifica no Supabase se o plano já foi ativado (após voltar do pagamento)
 async function verificarPlanoAtivo(){
   if(!currentUser || !sb) return;
+  const eraFreeAntes = (state.planTier || 'free') === 'free';
   await carregarPerfil();   // recarrega o plan_tier do servidor
   if(state.planTier && state.planTier!=='free'){
-    showToast('✅ Assinatura ativa! Bem-vindo ao Dieta IA');
+    // Se acabou de virar assinante (era free e agora não é), mostra a comemoração
+    if(eraFreeAntes && !state.celebracaoVista){
+      setState({ celebracaoVista:true });
+      mostrarCelebracao();
+    } else {
+      showToast('✅ Assinatura ativa! Bem-vindo ao Dieta IA');
+    }
   }
+}
+
+// ══════════════ TELA DE COMEMORAÇÃO PÓS-ASSINATURA ════════════════════════════
+function mostrarCelebracao(){
+  // Remove qualquer celebração anterior
+  document.getElementById('celebracao-ov')?.remove();
+
+  const nome = (state.name||'').split(' ')[0] || '';
+  const saudacao = nome ? `Parabéns, ${esc(nome)}!` : 'Parabéns!';
+
+  // Gera confetes
+  let confetes = '';
+  const cores = ['#22c55e','#15803d','#4ade80','#facc15','#38bdf8','#fb7185'];
+  for(let i=0;i<40;i++){
+    const cor = cores[i % cores.length];
+    const left = Math.random()*100;
+    const delay = Math.random()*0.6;
+    const dur = 2.2 + Math.random()*1.6;
+    const size = 6 + Math.random()*7;
+    const rot = Math.random()*360;
+    confetes += `<span class="confete" style="left:${left}%;background:${cor};width:${size}px;height:${size*0.5}px;animation-delay:${delay}s;animation-duration:${dur}s;transform:rotate(${rot}deg)"></span>`;
+  }
+
+  const ov = document.createElement('div');
+  ov.id = 'celebracao-ov';
+  ov.className = 'modal-ov';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(6,20,12,.55);backdrop-filter:blur(4px);overflow:hidden';
+  ov.innerHTML = `
+    <div class="confete-wrap" style="position:absolute;inset:0;pointer-events:none;overflow:hidden">${confetes}</div>
+    <div class="celebra-card" style="position:relative;max-width:360px;width:100%;background:var(--card,#fff);border-radius:24px;padding:32px 26px;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.35);animation:celebraPop .5s cubic-bezier(.18,.89,.32,1.28)">
+      <div style="width:88px;height:88px;margin:0 auto 18px;border-radius:50%;background:linear-gradient(135deg,#22c55e,#15803d);display:flex;align-items:center;justify-content:center;box-shadow:0 8px 24px rgba(34,197,94,.4)">
+        <span style="font-size:44px">🎉</span>
+      </div>
+      <h2 style="font-size:24px;font-weight:800;color:var(--text,#14281d);margin-bottom:8px">${saudacao}</h2>
+      <p style="font-size:15px;font-weight:600;color:var(--green-mid,#15803d);margin-bottom:6px">Sua assinatura está ativa! 🥗</p>
+      <p style="font-size:14px;line-height:1.55;color:var(--text-3,#5b7065);margin-bottom:24px">
+        Agora você tem acesso completo ao <b>Dieta IA</b>: planos alimentares personalizados, ajustes inteligentes e muito mais. Vamos começar sua transformação!
+      </p>
+      <button onclick="fecharCelebracao()" style="width:100%;padding:15px;border:none;border-radius:14px;background:linear-gradient(135deg,#22c55e,#15803d);color:#fff;font-size:16px;font-weight:700;cursor:pointer;box-shadow:0 6px 18px rgba(34,197,94,.35)">
+        Começar agora →
+      </button>
+    </div>`;
+  document.body.appendChild(ov);
+}
+
+function fecharCelebracao(){
+  const ov = document.getElementById('celebracao-ov');
+  if(ov){ ov.style.animation='fadeOutCelebra .3s forwards'; setTimeout(()=>ov.remove(),300); }
+  // Leva o usuário direto pro plano alimentar
+  setState({ tab:'search', screen:'main' });
 }
 
 function activatePremiumCode(){
