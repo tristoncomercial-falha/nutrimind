@@ -5,8 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="NutriMind">
   <meta name="theme-color" content="#0d2a0d">
   <title>NutriMind IA — Dieta & Treino</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="logo_oficial.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style id="tw-micro">
 
@@ -1138,7 +1144,7 @@ function loadState(){try{const s=localStorage.getItem('ng4');return s?JSON.parse
 function saveState(s){try{localStorage.setItem('ng4',JSON.stringify(s));}catch{}}
 
 const saved=loadState();
-let state=saved||{
+const DEFAULT_STATE={
   screen:'login',step:0,
   authed:false,authMode:'signup',authEmail:'',authName:'',
   goal:null,name:'',sex:'M',age:25,weight:70,height:170,activity:'moderate',restrictions:[],
@@ -1156,6 +1162,7 @@ let state=saved||{
   showActModal:false,
   showJunkModal:false,junkGroup:'lanche',junkQty:1,junkDays:{},
   extraMeals:[],showAddMealModal:false,
+  multiSel:[],showMultiModal:false,
   selActCat:'cardio',selActId:null,selIntensidade:'moderado',selMinutos:30,
   tipIndex:0,
   checkedItems:{},
@@ -1194,6 +1201,18 @@ let state=saved||{
   upgradeTarget:''
 };
 
+// Mescla o estado salvo com os padrões: usuários antigos ganham os campos
+// novos automaticamente (sem isso, features novas quebrariam para eles).
+let state=saved?Object.assign({},DEFAULT_STATE,saved):DEFAULT_STATE;
+
+// Estados transientes nunca devem persistir entre sessões (evita, por ex.,
+// um modal reabrir sozinho ao recarregar o app).
+Object.assign(state,{
+  showActModal:false, showJunkModal:false, showWaterModal:false,
+  showWeightModal:false, showAddMealModal:false, showUpgradeModal:false,
+  showMultiModal:false, selFoodId:null
+});
+
 if(saved&&saved.screen==='onboarding'&&saved.goal&&saved.tdee>0) state.screen='main';
 // Usuários antigos (sem campo de login) que já completaram o onboarding: entram direto.
 // Novos usuários veem a tela de login primeiro.
@@ -1224,7 +1243,7 @@ function calcIMC(){
 
 function setState(patch){
   // Detecta navegação relevante para registrar no histórico do navegador
-  const navKeys=['tab','screen','selFoodId','showJunkModal','showAddMealModal','showWaterModal','showWeightModal','showActModal','showUpgradeModal'];
+  const navKeys=['tab','screen','selFoodId','showJunkModal','showAddMealModal','showWaterModal','showWeightModal','showActModal','showUpgradeModal','showMultiModal'];
   const isNav = navKeys.some(k=>k in patch && patch[k]!==state[k]);
   Object.assign(state,patch);
   saveState(state);
@@ -1248,18 +1267,20 @@ function setNav(patch){
 // Fecha o que estiver aberto (modais) ou volta de tela, na ordem certa
 function handleBack(){
   // 1. Modais abertos têm prioridade — fecha o primeiro encontrado
-  const modais=['showJunkModal','showAddMealModal','showWaterModal','showWeightModal','showActModal','showUpgradeModal','showAllFoods'];
+  const modais=['showMultiModal','showJunkModal','showAddMealModal','showWaterModal','showWeightModal','showActModal','showUpgradeModal','showAllFoods'];
   for(const m of modais){
     if(state[m]){ setState({[m]:false}); return true; }
   }
   // 2. Tela de detalhe de alimento aberta
   if(state.selFoodId){ setState({selFoodId:null}); return true; }
-  // 3. Telas secundárias voltam para a home
+  // 3. Tela de Termos/Privacidade volta para onde estava
+  if(state.screen==='legal'){ voltarDoLegal(); return true; }
+  // 4. Telas secundárias voltam para a home
   if(state.screen==='main' && state.tab && state.tab!=='home'){
     setState({tab:'home'}); return true;
   }
   if(state.tab==='progress'||state.tab==='profile'){ setState({tab:'home'}); return true; }
-  // 4. Já está na home — deixa o navegador sair normalmente
+  // 5. Já está na home — deixa o navegador sair normalmente
   return false;
 }
 window.addEventListener('popstate', (e)=>{
@@ -1305,15 +1326,82 @@ function addFoodById(foodId){
   let de=weekLog.find(w=>w.date===today);
   if(!de){de={date:today,cal:0,p:0,c:0,g:0};weekLog.push(de);}
   de.cal+=cal;de.p+=entry.p;de.c+=entry.c;de.g+=entry.g;
-  // Atualiza estado e vai para home DEPOIS de tudo gravado
+  // Fecha o detalhe do alimento e volta para a lista de busca (mesma tela),
+  // sem pular para a home — o usuário continua de onde estava.
   state.todayLog=log;
   state.weekLog=weekLog;
   state.selFoodId=null;
-  state.searchQ='';
-  state.tab='home';
   saveState(state);
   render();
   showToast(`✓ ${food.n} · ${cal} kcal → ${state.selMeal}`);
+}
+
+// ── Atualização AO VIVO dos sliders (sem re-render: não perde o arrasto nem o scroll) ──
+function liveGrams(v){
+  state.selGrams=+v;
+  saveState(state);
+  const food=FOODS.find(f=>f.id===state.selFoodId);
+  if(!food) return;
+  const cal=Math.round(food.cal*v/100);
+  const set=(id,val)=>{const e=document.getElementById(id); if(e)e.textContent=val;};
+  set('fdG1',v); set('fdG2',v); set('fdBtnG',v);
+  set('fdCal',cal); set('fdBtnCal',cal);
+}
+
+function liveMinutos(v){
+  state.selMinutos=+v;
+  saveState(state);
+  const k=calcActKcal(state.selActId,state.selIntensidade,state.selMinutos);
+  const set=(id,val)=>{const e=document.getElementById(id); if(e)e.textContent=val;};
+  set('pvKcal',k); set('pvBtnKcal',k);
+  set('pvMin',state.selMinutos);
+  set('pvHrs',(state.selMinutos/60).toFixed(2));
+  atualizaPresetsDuracao();
+}
+
+// Constantes compartilhadas para atualização ao vivo do modal de treino
+const _INT_COLORS={leve:'#60a5fa',moderado:'var(--green)',intenso:'#ef4444'};
+const _INT_DESC={leve:'Esforço baixo, dá pra conversar',moderado:'Esforço médio, respiração acelerada',intenso:'Esforço máximo, difícil falar'};
+
+// Muda a intensidade SEM re-renderizar o modal (não pula pro topo)
+function setIntensidade(int){
+  state.selIntensidade=int;
+  saveState(state);
+  // Atualiza o destaque dos botões de intensidade
+  document.querySelectorAll('#intBtns .intensity-btn').forEach(btn=>{
+    const isSel=btn.getAttribute('data-int')===int;
+    btn.classList.toggle('sel', isSel);
+    if(isSel){ btn.style.background=_INT_COLORS[int]; btn.style.borderColor=_INT_COLORS[int]; }
+    else { btn.style.background=''; btn.style.borderColor='var(--border)'; }
+  });
+  const desc=document.getElementById('intDescTxt');
+  if(desc) desc.textContent=_INT_DESC[int];
+  // Recalcula o preview de calorias
+  liveMinutos(state.selMinutos);
+}
+
+// Botões +/− de duração, sem re-render
+function stepMinutos(delta){
+  const nv=Math.max(10, Math.min(180, (state.selMinutos||30)+delta));
+  const range=document.getElementById('durRange');
+  if(range) range.value=nv;
+  liveMinutos(nv);
+}
+
+// Presets de duração (15/20/30...), sem re-render
+function setMinutosPreset(m){
+  const range=document.getElementById('durRange');
+  if(range) range.value=m;
+  liveMinutos(m);
+}
+
+// Atualiza o destaque dos presets de duração conforme o valor atual
+function atualizaPresetsDuracao(){
+  document.querySelectorAll('#durPresets [data-min]').forEach(btn=>{
+    const isSel=+btn.getAttribute('data-min')===state.selMinutos;
+    btn.style.background=isSel?'var(--green)':'var(--bg2)';
+    btn.style.color=isSel?'white':'var(--text-3)';
+  });
 }
 
 function removeLogItem(idx){
@@ -1403,15 +1491,22 @@ function toggleRestriction(r){
 // ─── RENDER ──────────────────────────────────────────────────────────────────
 function render(){
   const app=document.getElementById('app');
-  // Preserva a posição de scroll do container rolável
-  const scroller=app.querySelector('.overflow-auto');
-  const prevScroll=scroller?scroller.scrollTop:0;
+  // Preserva a posição de scroll do container principal da tela.
+  // Usa o maior scroller visível (o conteúdo da tela), que é estável mesmo
+  // quando modais abrem/fecham e mudam a contagem de elementos roláveis.
+  const mainScroller=[...app.querySelectorAll('.overflow-auto')]
+    .sort((a,b)=>b.scrollHeight-a.scrollHeight)[0];
+  const prevScroll=mainScroller?mainScroller.scrollTop:0;
+
   if(state.screen==='login') renderLogin(app);
   else if(state.screen==='onboarding') renderOnboarding(app);
+  else if(state.screen==='legal') renderLegal(app);
   else renderMain(app);
-  // Restaura o scroll após re-renderizar
+
+  // Restaura o scroll do container principal após re-renderizar
   if(prevScroll>0){
-    const newScroller=app.querySelector('.overflow-auto');
+    const newScroller=[...app.querySelectorAll('.overflow-auto')]
+      .sort((a,b)=>b.scrollHeight-a.scrollHeight)[0];
     if(newScroller) newScroller.scrollTop=prevScroll;
   }
   setTimeout(()=>{ try{lucide.createIcons();}catch(e){} },20);
@@ -1523,7 +1618,7 @@ function renderLogin(el){
       </div>
 
       <p class="text-center text-[10px] mt-6 px-4" style="color:var(--text-3)">
-        Ao continuar, você concorda com os Termos de Uso e a Política de Privacidade do NutriMind IA.
+        Ao continuar, você concorda com os <span onclick="abrirLegal('termos')" style="text-decoration:underline;cursor:pointer;color:var(--green-mid)">Termos de Uso</span> e a <span onclick="abrirLegal('privacidade')" style="text-decoration:underline;cursor:pointer;color:var(--green-mid)">Política de Privacidade</span> do NutriMind IA.
       </p>
     </div>
   </div>`;
@@ -1535,7 +1630,8 @@ function authNext(forceOnboarding){
   // Cadastro novo: sempre vai pro questionário de objetivos.
   // Login: vai pro app se já tem perfil; senão, questionário.
   const next=(!forceOnboarding && state.goal && state.tdee>0)?'main':'onboarding';
-  setState({authed:true,screen:next,step:0,authMode:'login'});
+  // Ao logar, sempre abre na aba de início (não na aba que ficou salva de antes).
+  setState({authed:true,screen:next,step:0,authMode:'login',tab:'home'});
 }
 
 function traduzErro(msg){
@@ -1705,6 +1801,7 @@ async function initAuth(){
       if(state.screen==='login'){
         state.authed=true;
         state.screen=(state.goal&&state.tdee>0)?'main':'onboarding';
+        state.tab='home';   // ao logar, sempre abre no início
       }
       // Se voltou do pagamento, recarrega o plano e avisa
       if(location.search.includes('payment') || document.referrer.includes('abacatepay') || document.referrer.includes('mercadopago')){
@@ -1716,7 +1813,7 @@ async function initAuth(){
         currentUser = session.user;
         carregarPerfil().then(()=>{
           if(state.screen==='login'){
-            setState({authed:true, screen:(state.goal&&state.tdee>0)?'main':'onboarding'});
+            setState({authed:true, screen:(state.goal&&state.tdee>0)?'main':'onboarding', tab:'home'});
           }
         });
       }
@@ -1971,7 +2068,7 @@ function renderMain(el){
     {id:'home',    icon:'home',     label:'Início',  lock:false},
     {id:'search',  icon:'utensils-crossed', label:'Dieta', lock:!hasNutri()},
     {id:'activity',icon:'activity', label:'Atividade', lock:false},
-    {id:'plan',    icon:'search',   label:'Alimentos', lock:!hasNutri()},
+    {id:'plan',    icon:'search',   label:'Alimentos', lock:false},
     {id:'premium', icon:'star',     label:'Planos',  lock:false}
   ];
 
@@ -1999,7 +2096,7 @@ function renderMain(el){
         <span style="${t.id==='premium'?'color:var(--green)':''}${t.lock?';opacity:.35':''}">${t.label}</span>
       </button>`).join('')}
     </nav>
-    ${renderWeightModal()}${renderWaterModal()}${renderActModal()}${renderJunkModal()}${renderAddMealModal()}${renderUpgradeModal()}
+    ${renderWeightModal()}${renderWaterModal()}${renderActModal()}${renderJunkModal()}${renderAddMealModal()}${renderUpgradeModal()}${renderMultiModal()}
   </div>`;
 }
 
@@ -2007,13 +2104,13 @@ function renderLockedFeature(tab){
   const names={
     search:'Dieta Personalizada',
     activity:'Treinos Inteligentes',
-    plan:'Plano Semanal & Compras'
+    plan:'Registro de Alimentos'
   };
-  const icons={search:'leaf',activity:'activity',plan:'calendar'};
+  const icons={search:'leaf',activity:'activity',plan:'search'};
   const descs={
-    search:'Busca de 140+ alimentos, macros detalhados e registro completo de refeições.',
+    search:'Plano alimentar semanal gerado por IA, dicas científicas e lista de compras 7/15/30 dias.',
     activity:'Semana de treinos gerada por IA com execução detalhada de cada exercício.',
-    plan:'Plano alimentar semanal, dicas científicas e lista de compras 7/15/30 dias.'
+    plan:'Busca de 140+ alimentos, macros detalhados e registro completo das suas refeições.'
   };
   const needs={search:'Dieta IA',activity:'Dieta & Treino IA',plan:'Dieta IA'};
   return `
@@ -2260,7 +2357,7 @@ function renderHome(){
                     <div class="flex items-center gap-2 flex-1 min-w-0">
                       <span class="text-base flex-shrink-0">${it.e||'🍽️'}</span>
                       <div class="min-w-0">
-                        <div class="text-xs font-semibold truncate" style="color:var(--text)">${it.name}</div>
+                        <div class="text-xs font-semibold truncate" style="color:var(--text)">${esc(it.name)}</div>
                         <div class="text-xs" style="color:var(--text-3)">${it.grams}g · P${it.p}g C${it.c}g G${it.g}g</div>
                       </div>
                     </div>
@@ -2324,7 +2421,7 @@ function renderHome(){
                     <div class="flex items-center gap-2 flex-1 min-w-0">
                       <span class="text-base flex-shrink-0">${it.e||'🍔'}</span>
                       <div class="min-w-0">
-                        <div class="text-xs font-semibold truncate" style="color:var(--text)">${it.name}</div>
+                        <div class="text-xs font-semibold truncate" style="color:var(--text)">${esc(it.name)}</div>
                         <div class="text-xs" style="color:var(--text-3)">P${it.p}g C${it.c}g G${it.g}g</div>
                       </div>
                     </div>
@@ -2380,21 +2477,17 @@ function renderSearch(){
   }
   const cat=state.searchCat||'all';
   const q=state.searchQ||'';
-  let filtered=q?FOODS.filter(f=>f.n.toLowerCase().includes(q.toLowerCase())):FOODS;
-  if(cat!=='all') filtered=filtered.filter(f=>f.cat===cat);
   const cats=['all',...Object.keys(CATINFO)];
   const catLbls={all:'Todos',...Object.fromEntries(Object.entries(CATINFO).map(([k,v])=>[k,v.label]))};
 
-  const showAll=state.showAllFoods||q||cat!=='all'; // se buscar ou filtrar, mostra todos
-  const limit=showAll?filtered.length:30;
   return `
   <div>
     <div class="px-5 pt-6 pb-3 sticky top-0 z-10" style="background:var(--bg)">
       <h1 class="text-xl font-extrabold mb-4" style="color:var(--text)">Buscar alimento</h1>
       <div class="relative mb-3">
         <i data-lucide="search" class="absolute left-3 top-3" style="color:var(--text-3);width:18px;height:18px"></i>
-        <input type="text" value="${q}" placeholder="Ex: frango, aveia, tofu..."
-          oninput="setState({searchQ:this.value})"
+        <input type="text" value="${esc(q)}" placeholder="Ex: frango, aveia, tofu..."
+          oninput="state.searchQ=this.value;saveState(state);refreshSearch()"
           style="width:100%;padding:11px 14px 11px 40px;border-radius:12px;border:1.5px solid var(--border);background:var(--card);color:var(--text);font-size:14px;outline:none;font-family:inherit">
       </div>
       <div class="flex gap-2 overflow-x-auto pb-1 mb-2">
@@ -2410,17 +2503,32 @@ function renderSearch(){
         </button>`).join('')}
       </div>
     </div>
-    <div class="px-5 pb-4">
+    <div class="px-5 pb-4" id="searchResults">${buildSearchResults()}</div>
+    ${buildMultiSelBar()}
+  </div>`;
+}
+
+// ── Lista de resultados da busca (separada para atualizar sem destruir o input) ──
+function buildSearchResults(){
+  const cat=state.searchCat||'all';
+  const q=state.searchQ||'';
+  let filtered=q?FOODS.filter(f=>f.n.toLowerCase().includes(q.toLowerCase())):FOODS;
+  if(cat!=='all') filtered=filtered.filter(f=>f.cat===cat);
+  const showAll=state.showAllFoods||q||cat!=='all';
+  const limit=showAll?filtered.length:30;
+  const msel=state.multiSel||[];
+  return `
       <p class="text-xs mb-3 font-semibold" style="color:var(--text-3)">${filtered.length} alimentos · adicionando em <b style="color:var(--green-dark)">${state.selMeal}</b></p>
       <div class="space-y-2">
         ${filtered.slice(0,limit).map((f,i)=>{
           const ci=CATINFO[f.cat]||{label:'',color:'#888'};
+          const isSel=msel.some(s=>s.id===f.id);
           return `
-          <button onclick="setState({selFoodId:${f.id},selGrams:100})" class="w-full text-left card p-4 fade-up" style="animation-delay:${Math.min(i,20)*12}ms">
+          <div onclick="setState({selFoodId:${f.id},selGrams:100})" class="w-full text-left card p-4 fade-up" style="animation-delay:${Math.min(i,20)*12}ms;cursor:pointer">
             <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center gap-3">
+              <div class="flex items-center gap-3" style="flex:1;min-width:0">
                 <span class="text-2xl">${f.e||'🍽️'}</span>
-                <div>
+                <div style="min-width:0">
                   <div class="font-bold text-sm" style="color:var(--text)">${f.n}</div>
                   <span class="catbadge" style="background:${ci.color}18;color:${ci.color}">${ci.label}</span>
                 </div>
@@ -2429,11 +2537,12 @@ function renderSearch(){
                 <div class="font-extrabold text-lg" style="color:var(--green-dark)">${f.cal}</div>
                 <div class="text-xs" style="color:var(--text-3)">kcal/100g</div>
               </div>
+              <button onclick="event.stopPropagation();toggleMultiSel(${f.id})" aria-label="${isSel?'Remover da seleção':'Selecionar'}" class="flex-shrink-0 ml-3 flex items-center justify-center" style="width:32px;height:32px;border-radius:50%;border:2px solid ${isSel?'var(--green)':'var(--border)'};background:${isSel?'var(--green)':'transparent'};color:${isSel?'#fff':'var(--text-3)'};cursor:pointer;font-size:15px;font-weight:800;transition:all .15s;padding:0">${isSel?'✓':'+'}</button>
             </div>
             <div class="flex gap-3 text-xs font-semibold">
               <span style="color:#60a5fa">P ${f.p}g</span><span style="color:#fbbf24">C ${f.c}g</span><span style="color:#f87171">G ${f.g}g</span>
             </div>
-          </button>`;
+          </div>`;
         }).join('')}
         ${filtered.length===0?`<div class="text-center py-12"><p class="text-sm" style="color:var(--text-3)">Nenhum alimento encontrado</p></div>`:''}
         ${(!showAll&&filtered.length>30)?`
@@ -2444,9 +2553,156 @@ function renderSearch(){
         <button onclick="setState({showAllFoods:false})" class="w-full py-3 rounded-2xl font-bold text-sm mt-2 flex items-center justify-center gap-2" style="background:var(--bg2);color:var(--text-3);border:none;cursor:pointer">
           <i data-lucide="chevron-up" style="width:16px;height:16px"></i> Mostrar menos
         </button>`:''}
+      </div>`;
+}
+
+// Atualiza APENAS a lista de resultados e a barra de seleção, sem destruir o
+// campo de busca (evita o teclado do celular fechar a cada letra digitada).
+function refreshSearch(){
+  const box=document.getElementById('searchResults');
+  if(box){
+    box.innerHTML=buildSearchResults();
+    setTimeout(()=>{ try{lucide.createIcons();}catch(e){} },10);
+  }
+  const bar=document.getElementById('mselBar');
+  if(bar) bar.outerHTML=buildMultiSelBar();
+}
+
+// ── SELEÇÃO MÚLTIPLA DE ALIMENTOS ─────────────────────────────────────────────
+function toggleMultiSel(foodId){
+  const msel=[...(state.multiSel||[])];
+  const i=msel.findIndex(s=>s.id===foodId);
+  if(i>=0) msel.splice(i,1);
+  else msel.push({id:foodId, grams:100});
+  state.multiSel=msel;
+  saveState(state);
+  refreshSearch();   // atualização leve: não fecha teclado nem perde scroll
+}
+
+function buildMultiSelBar(){
+  const msel=state.multiSel||[];
+  if(!msel.length) return `<div id="mselBar"></div>`;
+  const totalCal=msel.reduce((t,s)=>{
+    const f=FOODS.find(x=>x.id===s.id); return t+(f?Math.round(f.cal*(s.grams||100)/100):0);
+  },0);
+  return `
+  <div id="mselBar" style="position:sticky;bottom:0;z-index:40;padding:10px 20px calc(14px + env(safe-area-inset-bottom));background:linear-gradient(transparent,var(--bg) 30%)">
+    <button onclick="setState({showMultiModal:true})" class="w-full py-4 rounded-2xl font-extrabold text-sm flex items-center justify-center gap-2" style="background:var(--green);color:#fff;border:none;cursor:pointer;box-shadow:0 8px 24px rgba(34,197,94,.35)">
+      🧺 Adicionar ${msel.length} ${msel.length===1?'alimento':'alimentos'} · ${totalCal} kcal →
+    </button>
+  </div>`;
+}
+
+function setMultiGrams(foodId, delta){
+  const msel=[...(state.multiSel||[])];
+  const s=msel.find(x=>x.id===foodId);
+  if(!s) return;
+  s.grams=Math.max(25, Math.min(500, (s.grams||100)+delta));
+  state.multiSel=msel;
+  saveState(state);
+  render();
+}
+
+function removeMultiSel(foodId){
+  state.multiSel=(state.multiSel||[]).filter(s=>s.id!==foodId);
+  if(!state.multiSel.length) state.showMultiModal=false;
+  saveState(state);
+  render();
+}
+
+function renderMultiModal(){
+  if(!state.showMultiModal) return '';
+  const msel=state.multiSel||[];
+  const meals=['Café da manhã','Almoço','Lanche','Jantar',...(state.extraMeals||[])];
+  const totalCal=msel.reduce((t,s)=>{
+    const f=FOODS.find(x=>x.id===s.id); return t+(f?Math.round(f.cal*(s.grams||100)/100):0);
+  },0);
+  return `
+  <div class="modal-ov" style="align-items:flex-start;overflow-y:auto" onclick="if(event.target===this)setState({showMultiModal:false})">
+    <div class="w-full rounded-t-3xl p-6" style="background:var(--card);max-height:none;margin-top:8vh;border-radius:24px 24px 0 0">
+      <div class="flex items-center justify-between mb-1">
+        <h2 class="text-lg font-extrabold" style="color:var(--text)">🧺 Revisar e adicionar</h2>
+        <button onclick="setState({showMultiModal:false})" class="w-8 h-8 rounded-full flex items-center justify-center" style="background:var(--bg2);border:none;cursor:pointer;color:var(--text-3)">✕</button>
       </div>
+      <p class="text-xs mb-4" style="color:var(--text-3)">Ajuste as quantidades e escolha a refeição</p>
+
+      <p class="text-xs font-bold uppercase tracking-wider mb-2" style="color:var(--text-3)">Refeição</p>
+      <div class="flex gap-2 overflow-x-auto pb-1 mb-4">
+        ${meals.map(m=>`
+        <button onclick="setState({selMeal:'${m}'})" class="px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap flex-shrink-0" style="background:${state.selMeal===m?'var(--green)':'var(--green-light)'};color:${state.selMeal===m?'white':'var(--green-dark)'};border:none;cursor:pointer">
+          ${MEAL_ICONS[m]||''} ${m}
+        </button>`).join('')}
+      </div>
+
+      <div class="space-y-3 mb-4">
+        ${msel.map(s=>{
+          const f=FOODS.find(x=>x.id===s.id);
+          if(!f) return '';
+          const cal=Math.round(f.cal*(s.grams||100)/100);
+          return `
+          <div class="card p-3">
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2" style="flex:1;min-width:0">
+                <span class="text-xl">${f.e||'🍽️'}</span>
+                <div class="font-bold text-sm truncate" style="color:var(--text)">${f.n}</div>
+              </div>
+              <button onclick="removeMultiSel(${f.id})" aria-label="Remover" style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:13px;padding:4px">✕</button>
+            </div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <button onclick="setMultiGrams(${f.id},-25)" class="w-8 h-8 rounded-full flex items-center justify-center" style="background:var(--bg2);border:none;cursor:pointer;color:var(--text);font-weight:800">−</button>
+                <span class="text-sm font-extrabold" style="color:var(--text);min-width:52px;text-align:center">${s.grams||100}g</span>
+                <button onclick="setMultiGrams(${f.id},25)" class="w-8 h-8 rounded-full flex items-center justify-center" style="background:var(--green-light);border:none;cursor:pointer;color:var(--green-dark);font-weight:800">+</button>
+              </div>
+              <div class="text-right">
+                <span class="font-extrabold" style="color:var(--green-dark)">${cal}</span>
+                <span class="text-xs" style="color:var(--text-3)"> kcal</span>
+              </div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+
+      <button onclick="confirmarMultiAdd()" class="btn-green w-full py-4 text-base" style="border:none;cursor:pointer">
+        ✓ Adicionar tudo em ${state.selMeal} · ${totalCal} kcal
+      </button>
+      <div style="height:calc(20px + env(safe-area-inset-bottom))"></div>
     </div>
   </div>`;
+}
+
+function confirmarMultiAdd(){
+  const msel=state.multiSel||[];
+  if(!msel.length) return;
+  const today=new Date().toISOString().slice(0,10);
+  const weekLog=[...(state.weekLog||[])];
+  let de=weekLog.find(w=>w.date===today);
+  if(!de){de={date:today,cal:0,p:0,c:0,g:0};weekLog.push(de);}
+  const log=[...state.todayLog];
+  let totalCal=0, count=0;
+  msel.forEach(s=>{
+    const f=FOODS.find(x=>x.id===s.id);
+    if(!f) return;
+    const grams=s.grams||100;
+    const cal=Math.round(f.cal*grams/100);
+    const entry={
+      name:f.n,cal,meal:state.selMeal,grams,
+      p:Math.round(f.p*grams/100*10)/10,
+      c:Math.round(f.c*grams/100*10)/10,
+      g:Math.round(f.g*grams/100*10)/10,
+      e:f.e||'🍽️',ts:Date.now()
+    };
+    log.push(entry);
+    de.cal+=cal;de.p+=entry.p;de.c+=entry.c;de.g+=entry.g;
+    totalCal+=cal;count++;
+  });
+  state.todayLog=log;
+  state.weekLog=weekLog;
+  state.multiSel=[];
+  state.showMultiModal=false;
+  saveState(state);
+  render();
+  showToast(`✓ ${count} ${count===1?'alimento':'alimentos'} · ${totalCal} kcal → ${state.selMeal}`);
 }
 
 // ══════════════ FOOD DETAIL — BUG CORRIGIDO ═══════════════════════════════════
@@ -2475,8 +2731,8 @@ function renderFoodDetail(food){
     <div class="px-5 pb-8">
       <!-- CALORIAS -->
       <div class="card-green p-6 mb-4 text-center text-white fade-up">
-        <p class="text-xs opacity-70 uppercase tracking-wider mb-1">Calorias para ${grams}g</p>
-        <div class="text-5xl font-extrabold">${cal}</div>
+        <p class="text-xs opacity-70 uppercase tracking-wider mb-1">Calorias para <span id="fdG1">${grams}</span>g</p>
+        <div class="text-5xl font-extrabold" id="fdCal">${cal}</div>
         <div class="text-sm opacity-80">kcal</div>
       </div>
 
@@ -2487,7 +2743,7 @@ function renderFoodDetail(food){
           <button onclick="setState({selGrams:Math.max(25,state.selGrams-25)})" class="w-10 h-10 rounded-full flex items-center justify-center btn-ghost">
             <i data-lucide="minus" style="width:18px;height:18px"></i>
           </button>
-          <input type="range" min="25" max="500" step="5" value="${grams}" oninput="setState({selGrams:+this.value})" class="flex-1">
+          <input type="range" min="25" max="500" step="5" value="${grams}" oninput="liveGrams(+this.value)" onchange="setState({selGrams:+this.value})" class="flex-1">
           <button onclick="setState({selGrams:Math.min(500,state.selGrams+25)})" class="w-10 h-10 rounded-full flex items-center justify-center btn-ghost">
             <i data-lucide="plus" style="width:18px;height:18px"></i>
           </button>
@@ -2498,7 +2754,7 @@ function renderFoodDetail(food){
             ${v}g
           </button>`).join('')}
         </div>
-        <div class="text-center text-2xl font-extrabold" style="color:var(--green-dark)">${grams}g</div>
+        <div class="text-center text-2xl font-extrabold" style="color:var(--green-dark)"><span id="fdG2">${grams}</span>g</div>
       </div>
 
       <!-- TABELA NUTRICIONAL -->
@@ -2533,7 +2789,7 @@ function renderFoodDetail(food){
         onclick="addFoodById(${food.id})"
         class="btn-green w-full pulse-btn fade-up d4"
         style="padding:16px;font-size:16px;border-radius:16px">
-        ✓ Registrar ${grams}g · ${cal} kcal em ${state.selMeal}
+        ✓ Registrar <span id="fdBtnG">${grams}</span>g · <span id="fdBtnCal">${cal}</span> kcal em ${state.selMeal}
       </button>
     </div>
   </div>`;
@@ -2588,13 +2844,13 @@ function renderPlan(){
           ${(aiDiet.refeicoes||[]).map(r=>`
           <div class="rounded-xl p-3" style="background:rgba(255,255,255,.7)">
             <div class="flex items-center justify-between mb-2">
-              <div class="font-bold text-sm" style="color:var(--green-dark)">${r.nome}${r.horario?' · '+r.horario:''}</div>
+              <div class="font-bold text-sm" style="color:var(--green-dark)">${esc(r.nome)}${r.horario?' · '+esc(r.horario):''}</div>
               <span class="text-xs font-bold" style="color:var(--green-mid)">${r.kcal} kcal</span>
             </div>
             <div class="space-y-1">
               ${(r.itens||[]).map(it=>`
               <div class="flex items-start justify-between gap-2 text-xs" style="color:var(--text-2)">
-                <div class="flex items-start gap-2"><div class="w-1.5 h-1.5 rounded-full mt-1 flex-shrink-0" style="background:var(--green)"></div>${it.alimento}</div>
+                <div class="flex items-start gap-2"><div class="w-1.5 h-1.5 rounded-full mt-1 flex-shrink-0" style="background:var(--green)"></div>${esc(it.alimento)}</div>
                 <span class="flex-shrink-0" style="color:var(--text-3)">${it.kcal}kcal</span>
               </div>`).join('')}
             </div>
@@ -2904,6 +3160,84 @@ function renderProgress(){
   </div>`;
 }
 
+// ══════════════ TERMOS E PRIVACIDADE ═════════════════════════════════════════
+function abrirLegal(doc){
+  setState({ screen:'legal', legalDoc: doc||'termos' });
+}
+function voltarDoLegal(){
+  // Volta pra onde estava (login se não logado, senão o app)
+  setState({ screen: state.authed ? 'main' : 'login' });
+}
+
+function renderLegal(el){
+  const doc = state.legalDoc || 'termos';
+  const hoje = 'julho de 2026';
+
+  const termos = `
+    <h1 style="font-size:22px;font-weight:800;color:var(--text);margin-bottom:4px">Termos de Uso</h1>
+    <p style="font-size:12px;color:var(--text-3);margin-bottom:20px">Última atualização: ${hoje}</p>
+
+    <div class="legal-alert" style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:14px 16px;margin-bottom:20px">
+      <p style="font-size:13px;font-weight:700;color:#b91c1c;margin-bottom:6px">⚠️ Aviso de saúde importante</p>
+      <p style="font-size:13px;line-height:1.6;color:#7f1d1d">O NutriMind IA é uma ferramenta de apoio informativo e educacional. As dietas, cálculos e sugestões são gerados por inteligência artificial e <b>NÃO substituem</b> a orientação de um nutricionista, médico ou profissional de saúde qualificado. Antes de iniciar qualquer dieta, programa alimentar ou mudança nos seus hábitos, consulte um profissional. O uso das informações do app é de sua inteira responsabilidade.</p>
+    </div>
+
+    ${legalSection('1. Aceitação dos termos', 'Ao criar uma conta ou usar o NutriMind IA ("aplicativo"), você concorda com estes Termos de Uso. Se não concordar, não utilize o aplicativo.')}
+    ${legalSection('2. O que é o NutriMind IA', 'O NutriMind IA é um aplicativo de apoio à alimentação que oferece planos alimentares, contagem de calorias, sugestões nutricionais geradas por inteligência artificial e acompanhamento de metas. É uma ferramenta informativa, não um serviço médico ou de nutrição clínica.')}
+    ${legalSection('3. Natureza informativa (não é aconselhamento médico)', 'Todo o conteúdo — incluindo planos de dieta, valores calóricos, recomendações e cálculos — tem caráter geral e educacional. O aplicativo não realiza diagnóstico, prescrição ou tratamento. Resultados variam de pessoa para pessoa. Consulte sempre um profissional de saúde antes de seguir qualquer orientação, especialmente se você tem condições de saúde, alergias, restrições alimentares, está grávida, amamentando, ou toma medicamentos.')}
+    ${legalSection('4. Cadastro e conta', 'Você é responsável pela veracidade dos dados informados e por manter a confidencialidade da sua senha. É necessário ter no mínimo 18 anos para usar o aplicativo, ou usar sob supervisão de um responsável legal.')}
+    ${legalSection('5. Assinatura e pagamento', 'O NutriMind IA oferece um plano pago (Dieta IA) por R$ 17,90/mês, cobrado via cartão de crédito através do processador de pagamentos AbacatePay. A assinatura é renovada automaticamente a cada mês até que você cancele. Você pode cancelar quando quiser, e o acesso permanece ativo até o fim do período já pago.')}
+    ${legalSection('6. Cancelamento e reembolso', 'Você pode cancelar sua assinatura a qualquer momento. Como se trata de um produto digital de acesso imediato, reembolsos seguem o Código de Defesa do Consumidor: você tem direito a arrependimento em até 7 dias da primeira contratação. Após esse prazo, o cancelamento encerra as cobranças futuras, sem reembolso proporcional do período em uso.')}
+    ${legalSection('7. Uso adequado', 'Você concorda em não usar o aplicativo para fins ilegais, não tentar burlar os sistemas de segurança ou pagamento, e não copiar ou redistribuir o conteúdo sem autorização.')}
+    ${legalSection('8. Limitação de responsabilidade', 'O NutriMind IA é fornecido "como está". Não nos responsabilizamos por decisões tomadas com base nas informações do aplicativo, nem por eventuais consequências à saúde decorrentes do uso das sugestões sem acompanhamento profissional. O uso é por sua conta e risco.')}
+    ${legalSection('9. Alterações', 'Estes termos podem ser atualizados. Mudanças relevantes serão comunicadas no aplicativo. O uso continuado após alterações significa concordância com os novos termos.')}
+    ${legalSection('10. Contato', 'Dúvidas sobre estes termos podem ser enviadas pelo e-mail de suporte informado no aplicativo.')}
+  `;
+
+  const privacidade = `
+    <h1 style="font-size:22px;font-weight:800;color:var(--text);margin-bottom:4px">Política de Privacidade</h1>
+    <p style="font-size:12px;color:var(--text-3);margin-bottom:20px">Última atualização: ${hoje}</p>
+
+    <div class="legal-alert" style="background:var(--green-card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:20px">
+      <p style="font-size:13px;line-height:1.6;color:var(--text-2)">Levamos a sua privacidade a sério. Esta política explica, de forma clara, quais dados coletamos, por que, e quais são os seus direitos — em conformidade com a <b>LGPD (Lei nº 13.709/2018)</b>.</p>
+    </div>
+
+    ${legalSection('1. Quem é o responsável', 'O NutriMind IA é operado por uma pessoa física (o desenvolvedor responsável), que atua como controlador dos dados pessoais tratados no aplicativo.')}
+    ${legalSection('2. Quais dados coletamos', 'Coletamos: (a) dados de cadastro — e-mail e nome (opcional); (b) dados de perfil que você informa — idade, sexo, peso, altura, nível de atividade e objetivo; (c) dados de uso — registros alimentares, metas e progresso que você adiciona; (d) dados de pagamento — processados diretamente pelo AbacatePay (não armazenamos os dados do seu cartão).')}
+    ${legalSection('3. Para que usamos', 'Usamos seus dados para: calcular suas metas nutricionais, gerar planos alimentares personalizados, salvar seu progresso, processar sua assinatura e melhorar o aplicativo. Não vendemos seus dados a terceiros.')}
+    ${legalSection('4. Inteligência artificial', 'As sugestões de dieta são geradas por modelos de IA. Os dados enviados para gerar seu plano (como objetivo e preferências) são processados para essa finalidade. Não enviamos dados que te identifiquem pessoalmente (como e-mail) para a geração de conteúdo.')}
+    ${legalSection('5. Onde os dados ficam', 'Seus dados são armazenados de forma segura no Supabase (infraestrutura de banco de dados). O aplicativo usa conexão criptografada (HTTPS). Parte dos dados também fica salva localmente no seu dispositivo para funcionamento offline.')}
+    ${legalSection('6. Compartilhamento', 'Compartilhamos dados apenas com os serviços essenciais ao funcionamento: Supabase (armazenamento) e AbacatePay (pagamento). Cada um trata os dados conforme suas próprias políticas e a LGPD.')}
+    ${legalSection('7. Seus direitos (LGPD)', 'Você pode, a qualquer momento: acessar seus dados, corrigi-los, solicitar a exclusão da sua conta e dos seus dados, e revogar consentimentos. Para exercer esses direitos, entre em contato pelo e-mail de suporte.')}
+    ${legalSection('8. Retenção e exclusão', 'Mantemos seus dados enquanto sua conta estiver ativa. Ao solicitar a exclusão, seus dados pessoais são removidos, exceto os que precisamos manter por obrigação legal (ex.: registros de pagamento).')}
+    ${legalSection('9. Cookies e rastreamento', 'O aplicativo não usa cookies de publicidade nem rastreadores de terceiros para fins de marketing.')}
+    ${legalSection('10. Contato do encarregado', 'Para questões sobre privacidade e proteção de dados, use o e-mail de suporte informado no aplicativo.')}
+  `;
+
+  el.innerHTML = `
+    <div class="overflow-auto" style="height:100dvh;background:var(--bg)">
+      <div style="position:sticky;top:0;z-index:10;background:var(--bg);padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button onclick="voltarDoLegal()" style="background:none;border:none;cursor:pointer;display:flex;align-items:center;color:var(--text)">
+          <i data-lucide="arrow-left" style="width:22px;height:22px"></i>
+        </button>
+        <div style="display:flex;gap:8px">
+          <button onclick="setState({legalDoc:'termos'})" class="legal-tab" style="padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:700;background:${doc==='termos'?'var(--green-mid)':'var(--green-card)'};color:${doc==='termos'?'#fff':'var(--text-3)'}">Termos</button>
+          <button onclick="setState({legalDoc:'privacidade'})" class="legal-tab" style="padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:13px;font-weight:700;background:${doc==='privacidade'?'var(--green-mid)':'var(--green-card)'};color:${doc==='privacidade'?'#fff':'var(--text-3)'}">Privacidade</button>
+        </div>
+      </div>
+      <div style="padding:24px 20px 60px;max-width:640px;margin:0 auto">
+        ${doc==='termos'?termos:privacidade}
+      </div>
+    </div>`;
+}
+
+function legalSection(titulo, texto){
+  return `<div style="margin-bottom:18px">
+    <h2 style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">${titulo}</h2>
+    <p style="font-size:13.5px;line-height:1.65;color:var(--text-2)">${texto}</p>
+  </div>`;
+}
+
 // ══════════════ PROFILE ═══════════════════════════════════════════════════════
 function renderProfile(){
   const goal=GOALS.find(g=>g.id===state.goal);
@@ -2967,6 +3301,10 @@ function renderProfile(){
     <button onclick="if(confirm('Deseja sair da sua conta?'))doLogout()" class="w-full py-3 text-sm fade-up d4 flex items-center justify-center gap-2" style="background:transparent;border:1.5px solid #fca5a5;color:#dc2626;border-radius:14px;font-weight:700;cursor:pointer;font-family:inherit">
       <i data-lucide="log-out" style="width:16px;height:16px"></i> Sair da conta
     </button>
+    <div class="fade-up d4" style="text-align:center;margin-top:18px;display:flex;gap:14px;justify-content:center">
+      <span onclick="abrirLegal('termos')" style="font-size:12px;color:var(--text-3);text-decoration:underline;cursor:pointer">Termos de Uso</span>
+      <span onclick="abrirLegal('privacidade')" style="font-size:12px;color:var(--text-3);text-decoration:underline;cursor:pointer">Política de Privacidade</span>
+    </div>
   </div>`;
 }
 
@@ -4374,24 +4712,24 @@ function renderActModal(){
       ${selId?`
       <!-- PASSO 3: INTENSIDADE -->
       <p class="text-xs font-bold uppercase tracking-wider mb-3" style="color:var(--text-3)">3 — Intensidade</p>
-      <div class="flex gap-2 mb-2">
+      <div class="flex gap-2 mb-2" id="intBtns">
         ${['leve','moderado','intenso'].map(int=>`
-        <button onclick="setState({selIntensidade:'${int}'})" class="intensity-btn ${selInt===int?'sel':''}" style="${selInt===int?`background:${intColors[int]};border-color:${intColors[int]}`:`border-color:var(--border)`}">
+        <button data-int="${int}" onclick="setIntensidade('${int}')" class="intensity-btn ${selInt===int?'sel':''}" style="${selInt===int?`background:${intColors[int]};border-color:${intColors[int]}`:`border-color:var(--border)`}">
           ${{leve:'😌 Leve',moderado:'💪 Moderado',intenso:'🔥 Intenso'}[int]}
         </button>`).join('')}
       </div>
-      <p class="text-xs mb-4" style="color:var(--text-3)">${intDesc[selInt]}</p>
+      <p class="text-xs mb-4" style="color:var(--text-3)" id="intDescTxt">${intDesc[selInt]}</p>
 
       <!-- PASSO 4: DURAÇÃO -->
       <p class="text-xs font-bold uppercase tracking-wider mb-3" style="color:var(--text-3)">4 — Duração</p>
       <div class="flex items-center gap-3 mb-2">
-        <button onclick="setState({selMinutos:Math.max(10,state.selMinutos-5)})" class="btn-ghost w-10 h-10 rounded-full flex items-center justify-center text-lg">−</button>
-        <input type="range" min="10" max="180" step="5" value="${selMin}" oninput="setState({selMinutos:+this.value})" class="flex-1">
-        <button onclick="setState({selMinutos:Math.min(180,state.selMinutos+5)})" class="btn-green w-10 h-10 rounded-full flex items-center justify-center text-lg">+</button>
+        <button onclick="stepMinutos(-5)" class="btn-ghost w-10 h-10 rounded-full flex items-center justify-center text-lg">−</button>
+        <input type="range" min="10" max="180" step="5" value="${selMin}" id="durRange" oninput="liveMinutos(+this.value)" onchange="setState({selMinutos:+this.value})" class="flex-1">
+        <button onclick="stepMinutos(5)" class="btn-green w-10 h-10 rounded-full flex items-center justify-center text-lg">+</button>
       </div>
-      <div class="flex gap-2 flex-wrap mb-4">
+      <div class="flex gap-2 flex-wrap mb-4" id="durPresets">
         ${[15,20,30,45,60,90].map(m=>`
-        <button onclick="setState({selMinutos:${m}})" class="px-3 py-1 rounded-lg text-xs font-bold" style="background:${selMin===m?'var(--green)':'var(--bg2)'};color:${selMin===m?'white':'var(--text-3)'}">
+        <button data-min="${m}" onclick="setMinutosPreset(${m})" class="px-3 py-1 rounded-lg text-xs font-bold" style="background:${selMin===m?'var(--green)':'var(--bg2)'};color:${selMin===m?'white':'var(--text-3)'}">
           ${m}min
         </button>`).join('')}
       </div>
@@ -4399,14 +4737,14 @@ function renderActModal(){
       <!-- PREVIEW -->
       <div class="rounded-2xl p-4 mb-5 text-center" style="background:linear-gradient(135deg,#fff7ed,#ffedd5);border:2px solid #fed7aa">
         <p class="text-xs font-semibold mb-1" style="color:#92400e">Estimativa de gasto calórico</p>
-        <div class="text-4xl font-extrabold mb-1" style="color:#f97316">${previewKcal}</div>
-        <p class="text-xs" style="color:#b45309">kcal · ${selMin} min · ${selAct?.name} ${selInt}</p>
-        <p class="text-[10px] mt-2" style="color:#d97706">MET ${selAct?.met[selInt]} × ${state.weight}kg × ${(selMin/60).toFixed(2)}h</p>
+        <div class="text-4xl font-extrabold mb-1" style="color:#f97316"><span id="pvKcal">${previewKcal}</span></div>
+        <p class="text-xs" style="color:#b45309">kcal · <span id="pvMin">${selMin}</span> min · ${selAct?.name} ${selInt}</p>
+        <p class="text-[10px] mt-2" style="color:#d97706">MET ${selAct?.met[selInt]} × ${state.weight}kg × <span id="pvHrs">${(selMin/60).toFixed(2)}</span>h</p>
       </div>
 
       <!-- BOTÃO -->
-      <button onclick="addActivity('${selId}','${selInt}',${selMin})" class="btn-green w-full py-4 text-base pulse-btn">
-        ✓ Registrar treino · ${previewKcal} kcal
+      <button onclick="addActivity(state.selActId,state.selIntensidade,state.selMinutos)" class="btn-green w-full py-4 text-base pulse-btn">
+        ✓ Registrar treino · <span id="pvBtnKcal">${previewKcal}</span> kcal
       </button>`:`
       <div class="text-center py-6" style="color:var(--text-3)">
         <p class="text-sm">Selecione uma atividade acima</p>
@@ -5013,7 +5351,7 @@ function renderPrescription(rx){
           <i data-lucide="clipboard-list" style="color:#2563eb;width:18px;height:18px"></i>
           <span class="font-bold text-sm" style="color:#1e3a5f">Orientações do Nutricionista</span>
         </div>
-        <p class="text-sm" style="color:#1e40af;line-height:1.6">${rx.orientacoes}</p>
+        <p class="text-sm" style="color:#1e40af;line-height:1.6">${esc(rx.orientacoes)}</p>
       </div>`:''}
 
       <!-- METAS -->
@@ -5096,7 +5434,7 @@ function renderPrescription(rx){
       <!-- DATA E VALIDADE -->
       <div class="card p-4 fade-up d5 text-center">
         <p class="text-xs" style="color:var(--text-3)">Prescrição elaborada em <b style="color:var(--text)">${rx.data||'—'}</b></p>
-        ${rx.validade?`<p class="text-xs mt-1" style="color:var(--text-3)">Válida até <b style="color:var(--text)">${rx.validade}</b></p>`:''}
+        ${rx.validade?`<p class="text-xs mt-1" style="color:var(--text-3)">Válida até <b style="color:var(--text)">${esc(rx.validade)}</b></p>`:''}
         <p class="text-xs mt-2" style="color:var(--text-3)">Código: <b style="color:var(--green-dark)">${rx.codigo||'—'}</b></p>
       </div>
 
@@ -5935,7 +6273,7 @@ function renderClientPortal(el){
             <i data-lucide="arrow-left" style="color:var(--green-mid);width:18px;height:18px"></i>
           </button>
           <div class="flex-1">
-            <h1 class="text-lg font-extrabold" style="color:var(--text)">Olá, ${user.nome}!</h1>
+            <h1 class="text-lg font-extrabold" style="color:var(--text)">Olá, ${esc(user.nome)}!</h1>
             <p class="text-xs" style="color:var(--text-3)">Sua prescrição nutricional personalizada</p>
           </div>
         </div>
@@ -5956,7 +6294,7 @@ function renderClientPortal(el){
             <i data-lucide="arrow-left" style="color:#dc2626;width:18px;height:18px"></i>
           </button>
           <div class="flex-1">
-            <h1 class="text-lg font-extrabold" style="color:var(--text)">Olá, ${user.nome}!</h1>
+            <h1 class="text-lg font-extrabold" style="color:var(--text)">Olá, ${esc(user.nome)}!</h1>
             <p class="text-xs" style="color:var(--text-3)">Sua planilha de treinos — ${user.nivel||'Nível não definido'}</p>
           </div>
         </div>
@@ -6043,7 +6381,7 @@ function renderPrescriptionContent(rx){
       </div>
       <div class="mt-3 text-xs opacity-50">Nutricionista: ${rx.nutriName||'—'} · CRN ${rx.crn||'—'}</div>
     </div>
-    ${rx.orientacoes?`<div class="rx-meta-card fade-up d1"><div class="flex items-center gap-2 mb-2"><i data-lucide="clipboard-list" style="color:#2563eb;width:16px;height:16px"></i><span class="font-bold text-sm" style="color:#1e3a5f">Orientações</span></div><p class="text-sm" style="color:#1e40af">${rx.orientacoes}</p></div>`:''}
+    ${rx.orientacoes?`<div class="rx-meta-card fade-up d1"><div class="flex items-center gap-2 mb-2"><i data-lucide="clipboard-list" style="color:#2563eb;width:16px;height:16px"></i><span class="font-bold text-sm" style="color:#1e3a5f">Orientações</span></div><p class="text-sm" style="color:#1e40af">${esc(rx.orientacoes)}</p></div>`:''}
     ${rx.metas&&rx.metas.length?`<div class="rx-meta-card fade-up d2"><div class="font-bold text-sm mb-2" style="color:#1e3a5f">🎯 Metas</div>${rx.metas.map(m=>`<div class="flex items-start gap-2 mb-1"><div class="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style="background:#2563eb"></div><span class="text-sm" style="color:#1e40af">${m}</span></div>`).join('')}</div>`:''}
     ${(rx.meals||[]).map(m=>`<div class="rx-meal-card fade-up"><div class="flex items-center gap-2 mb-2"><span>${mealEmojis[m.nome]||'🍽️'}</span><div class="font-bold text-sm" style="color:#14532d">${m.nome}${m.horario?' · '+m.horario:''}</div>${m.kcal?`<span class="ml-auto text-xs font-bold" style="color:var(--green-mid)">${m.kcal} kcal</span>`:''}</div>${(m.itens||[]).map(it=>`<div class="flex items-start gap-2 mb-1"><div class="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style="background:var(--green-mid)"></div><span class="text-sm" style="color:#166534">${it}</span></div>`).join('')}${m.subs&&m.subs.length?`<div class="mt-2 text-xs font-bold" style="color:#15803d">🔄 Substituições: ${m.subs.join(' · ')}</div>`:''}</div>`).join('')}
     ${rx.suplementos&&rx.suplementos.length?`<div class="fade-up"><p class="text-xs font-bold uppercase tracking-wider mb-2" style="color:var(--text-3)">💊 Suplementação</p>${rx.suplementos.map(s=>`<div class="rx-sup-card"><div class="flex items-center justify-between mb-1"><span class="font-bold text-sm" style="color:#581c87">${s.nome}</span>${s.dose?`<span class="text-xs px-2 py-0.5 rounded-full" style="background:#ede9fe;color:#7c3aed">${s.dose}</span>`:''}</div>${s.horario?`<div class="text-xs" style="color:#6d28d9">⏰ ${s.horario}</div>`:''}</div>`).join('')}</div>`:''}
@@ -6060,6 +6398,13 @@ ensureGenMonth();
 initHistory();
 // Tenta restaurar a sessão do Supabase antes de desenhar; se falhar, desenha mesmo assim
 if(sb){ initAuth().finally(render); } else { render(); }
+
+// ── Registra o Service Worker (PWA instalável + offline) ──
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  });
+}
 </script>
 </body>
 </html>
