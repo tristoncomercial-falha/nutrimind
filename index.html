@@ -1011,7 +1011,7 @@ function addActivity(actId, intensidade, minutos){
   const act=ACTIVITIES.find(a=>a.id===actId);
   if(!act) return;
   const kcal=calcActKcal(actId,intensidade,minutos);
-  const today=new Date().toISOString().slice(0,10);
+  const today=hojeLocal();
   const entry={id:actId,name:act.name,e:act.e,cat:act.cat,intensidade,minutos,kcal,date:today,ts:Date.now()};
   const actLog=[...(state.actLog||[]),entry];
   // Atualiza log semanal de atividades
@@ -1041,7 +1041,7 @@ function removeActivity(idx){
 
 // Conclui um treino gerado (IA ou personal) com nome e kcal corretos
 function completeWorkout(nome, kcal, minutos){
-  const today=new Date().toISOString().slice(0,10);
+  const today=hojeLocal();
   const entry={id:'workout',name:nome||'Treino concluído',e:'🏋️',cat:'musculacao',intensidade:'moderado',minutos:minutos||45,kcal:kcal||300,date:today,ts:Date.now()};
   const actLog=[...(state.actLog||[]),entry];
   const actWeek=[...(state.actWeek||[])];
@@ -1140,6 +1140,36 @@ function esc(s){
 }
 
 // ─── STATE ───────────────────────────────────────────────────────────────────
+// ─── DATA LOCAL (fuso do usuário, não UTC) ───────────────────────────────────
+// toISOString() usa UTC: no Brasil (UTC-3), às 21:00 já seria "amanhã".
+// Estas funções usam o calendário local do aparelho.
+function dataLocal(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function hojeLocal(){ return dataLocal(new Date()); }
+function mesLocal(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+
+// ─── VIRADA DE DIA ────────────────────────────────────────────────────────────
+// A partir da 00:00 (hora local), o dia anterior é arquivado e o registro
+// diário (refeições, água) começa limpo. O histórico semanal é preservado
+// porque cada registro já grava no weekLog na hora.
+function checkNovoDia(){
+  const hoje=hojeLocal();
+  if(!state.logDate){
+    // Migração de versões antigas: infere o dia pela última refeição registrada
+    const lastTs=(state.todayLog||[]).reduce((m,l)=>Math.max(m,l.ts||0),0);
+    state.logDate=lastTs?dataLocal(new Date(lastTs)):hoje;
+  }
+  if(state.logDate!==hoje){
+    state.logDate=hoje;
+    state.todayLog=[];
+    state.waterToday=0;
+    saveState(state);
+    return true;   // virou o dia
+  }
+  return false;
+}
+
 function loadState(){try{const s=localStorage.getItem('ng4');return s?JSON.parse(s):null;}catch{return null;}}
 function saveState(s){try{localStorage.setItem('ng4',JSON.stringify(s));}catch{}}
 
@@ -1149,7 +1179,7 @@ const DEFAULT_STATE={
   authed:false,authMode:'signup',authEmail:'',authName:'',
   goal:null,name:'',sex:'M',age:25,weight:70,height:170,activity:'moderate',restrictions:[],
   tdee:0,targetCal:0,
-  todayLog:[],weekLog:[],
+  todayLog:[],weekLog:[],logDate:null,
   actLog:[],actWeek:[],
   tab:'home',
   selMeal:'Almoço',selGrams:100,selFoodId:null,
@@ -1163,6 +1193,7 @@ const DEFAULT_STATE={
   showJunkModal:false,junkGroup:'lanche',junkQty:1,junkDays:{},
   extraMeals:[],showAddMealModal:false,
   multiSel:[],showMultiModal:false,
+  dietaNutri:null,showImportModal:false,importStep:'upload',importPreview:null,importErro:'',importBusy:false,
   selActCat:'cardio',selActId:null,selIntensidade:'moderado',selMinutos:30,
   tipIndex:0,
   checkedItems:{},
@@ -1210,7 +1241,8 @@ let state=saved?Object.assign({},DEFAULT_STATE,saved):DEFAULT_STATE;
 Object.assign(state,{
   showActModal:false, showJunkModal:false, showWaterModal:false,
   showWeightModal:false, showAddMealModal:false, showUpgradeModal:false,
-  showMultiModal:false, selFoodId:null
+  showMultiModal:false, selFoodId:null,
+  showImportModal:false, importStep:'upload', importPreview:null, importErro:'', importBusy:false
 });
 
 if(saved&&saved.screen==='onboarding'&&saved.goal&&saved.tdee>0) state.screen='main';
@@ -1243,7 +1275,7 @@ function calcIMC(){
 
 function setState(patch){
   // Detecta navegação relevante para registrar no histórico do navegador
-  const navKeys=['tab','screen','selFoodId','showJunkModal','showAddMealModal','showWaterModal','showWeightModal','showActModal','showUpgradeModal','showMultiModal'];
+  const navKeys=['tab','screen','selFoodId','showJunkModal','showAddMealModal','showWaterModal','showWeightModal','showActModal','showUpgradeModal','showMultiModal','showImportModal'];
   const isNav = navKeys.some(k=>k in patch && patch[k]!==state[k]);
   Object.assign(state,patch);
   saveState(state);
@@ -1267,7 +1299,7 @@ function setNav(patch){
 // Fecha o que estiver aberto (modais) ou volta de tela, na ordem certa
 function handleBack(){
   // 1. Modais abertos têm prioridade — fecha o primeiro encontrado
-  const modais=['showMultiModal','showJunkModal','showAddMealModal','showWaterModal','showWeightModal','showActModal','showUpgradeModal','showAllFoods'];
+  const modais=['showImportModal','showMultiModal','showJunkModal','showAddMealModal','showWaterModal','showWeightModal','showActModal','showUpgradeModal','showAllFoods'];
   for(const m of modais){
     if(state[m]){ setState({[m]:false}); return true; }
   }
@@ -1321,7 +1353,7 @@ function addFoodById(foodId){
     ts:Date.now()
   };
   const log=[...state.todayLog,entry];
-  const today=new Date().toISOString().slice(0,10);
+  const today=hojeLocal();
   const weekLog=[...(state.weekLog||[])];
   let de=weekLog.find(w=>w.date===today);
   if(!de){de={date:today,cal:0,p:0,c:0,g:0};weekLog.push(de);}
@@ -1426,7 +1458,7 @@ function addJunkFood(junkId){
     ts:Date.now()
   };
   const log=[...state.todayLog,entry];
-  const today=new Date().toISOString().slice(0,10);
+  const today=hojeLocal();
   const weekLog=[...(state.weekLog||[])];
   let de=weekLog.find(w=>w.date===today);
   if(!de){de={date:today,cal:0,p:0,c:0,g:0};weekLog.push(de);}
@@ -1444,11 +1476,11 @@ function addJunkFood(junkId){
 }
 
 function junkDayTotal(){
-  const today=new Date().toISOString().slice(0,10);
+  const today=hojeLocal();
   return state.todayLog.filter(l=>l.junk).reduce((s,i)=>s+i.cal,0);
 }
 function junkDaysThisMonth(){
-  const mes=new Date().toISOString().slice(0,7);
+  const mes=mesLocal();
   const jd=state.junkDays||{};
   return Object.keys(jd).filter(d=>d.startsWith(mes)).length;
 }
@@ -2096,7 +2128,7 @@ function renderMain(el){
         <span style="${t.id==='premium'?'color:var(--green)':''}${t.lock?';opacity:.35':''}">${t.label}</span>
       </button>`).join('')}
     </nav>
-    ${renderWeightModal()}${renderWaterModal()}${renderActModal()}${renderJunkModal()}${renderAddMealModal()}${renderUpgradeModal()}${renderMultiModal()}
+    ${renderWeightModal()}${renderWaterModal()}${renderActModal()}${renderJunkModal()}${renderAddMealModal()}${renderUpgradeModal()}${renderMultiModal()}${renderImportModal()}
   </div>`;
 }
 
@@ -2132,7 +2164,7 @@ function renderLockedFeature(tab){
 // ══════════════ HOME ══════════════════════════════════════════════════════════
 function renderHome(){
   const cal=todayCals(),target=state.targetCal||2000;
-  const today=new Date().toISOString().slice(0,10);
+  const today=hojeLocal();
   const todayBurned=(state.actLog||[]).filter(a=>a.date===today).reduce((s,a)=>s+a.kcal,0);
   const rem=Math.max(target-cal+todayBurned,0),pct=Math.min((cal-todayBurned)/target,1);
   const ringR=62,circ=2*Math.PI*ringR,offset=circ*(1-pct);
@@ -2674,7 +2706,7 @@ function renderMultiModal(){
 function confirmarMultiAdd(){
   const msel=state.multiSel||[];
   if(!msel.length) return;
-  const today=new Date().toISOString().slice(0,10);
+  const today=hojeLocal();
   const weekLog=[...(state.weekLog||[])];
   let de=weekLog.find(w=>w.date===today);
   if(!de){de={date:today,cal:0,p:0,c:0,g:0};weekLog.push(de);}
@@ -2796,7 +2828,293 @@ function renderFoodDetail(food){
 }
 
 // ══════════════ PLAN + LISTAS 7/15/30 DIAS ════════════════════════════════════
+// ══════════════ IMPORTAR DIETA DO NUTRICIONISTA ══════════════════════════════
+// O cliente envia foto ou PDF da dieta que o nutricionista passou.
+// A IA extrai a estrutura; o cliente REVISA (obrigatório) e confirma.
+
+function abrirImportarDieta(){
+  if(!hasNutri()){ setState({showUpgradeModal:true, upgradeTarget:'dieta'}); return; }
+  setState({showImportModal:true, importStep:'upload', importErro:'', importPreview:null});
+}
+
+function fecharImportar(){
+  setState({showImportModal:false, importStep:'upload', importErro:'', importPreview:null, importBusy:false});
+}
+
+// Lê o arquivo escolhido e dispara a extração
+async function onImportFile(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+
+  const MAX = 8 * 1024 * 1024; // 8MB
+  if(file.size > MAX){
+    setState({importErro:'Arquivo muito grande (máx. 8MB). Tente uma foto menor ou tire outra com menos zoom.'});
+    return;
+  }
+  const tipo = file.type || '';
+  const ehPdf = tipo === 'application/pdf' || /\.pdf$/i.test(file.name||'');
+  const ehImg = /^image\//.test(tipo);
+  if(!ehPdf && !ehImg){
+    setState({importErro:'Formato não suportado. Envie uma foto (JPG/PNG) ou um PDF.'});
+    return;
+  }
+
+  state.importErro='';
+  state.importBusy=true;
+  state.importStep='lendo';
+  saveState(state); render();
+
+  try{
+    const b64 = await fileParaBase64(file);
+    const rx = await extrairDietaIA(b64, ehPdf ? 'application/pdf' : tipo);
+    if(!rx || !Array.isArray(rx.meals) || !rx.meals.length){
+      throw new Error('Não consegui identificar as refeições nesse arquivo.');
+    }
+    state.importPreview = rx;
+    state.importBusy=false;
+    state.importStep='revisar';
+    saveState(state); render();
+  }catch(e){
+    state.importBusy=false;
+    state.importStep='upload';
+    state.importErro = (e && e.message) ? e.message : 'Não consegui ler o arquivo. Tente uma foto mais nítida e bem iluminada.';
+    saveState(state); render();
+  }
+}
+
+function fileParaBase64(file){
+  return new Promise((res,rej)=>{
+    const r = new FileReader();
+    r.onload = ()=>{ try{ res(String(r.result).split(',')[1]); }catch(e){ rej(new Error('Falha ao ler o arquivo')); } };
+    r.onerror = ()=>rej(new Error('Falha ao ler o arquivo'));
+    r.readAsDataURL(file);
+  });
+}
+
+// Envia a imagem/PDF para a IA (via worker) e pede o JSON estruturado
+async function extrairDietaIA(base64, mediaType){
+  const instrucao = `Você está lendo a PRESCRIÇÃO ALIMENTAR de um nutricionista (documento em português do Brasil).
+Extraia fielmente o conteúdo e devolva SOMENTE um objeto JSON válido, sem markdown, sem comentários, exatamente neste formato:
+
+{
+  "nutriName": "nome do nutricionista se aparecer, senão \\"\\"",
+  "crn": "número do CRN se aparecer, senão \\"\\"",
+  "kcal": número de calorias diárias se aparecer (senão null),
+  "prot": gramas de proteína/dia se aparecer (senão null),
+  "carb": gramas de carboidrato/dia se aparecer (senão null),
+  "fat": gramas de gordura/dia se aparecer (senão null),
+  "orientacoes": "orientações gerais do nutricionista, se houver",
+  "metas": ["metas ou recomendações listadas, se houver"],
+  "meals": [
+    {
+      "nome": "Café da manhã",
+      "horario": "07:00 (se aparecer, senão \\"\\")",
+      "kcal": calorias da refeição se aparecer (senão null),
+      "itens": ["1 fatia de pão integral", "2 ovos mexidos"],
+      "subs": ["substituições sugeridas para essa refeição, se houver"]
+    }
+  ],
+  "suplementos": [ { "nome": "Whey", "dose": "30g", "horario": "pós-treino" } ]
+}
+
+REGRAS IMPORTANTES:
+- Copie os alimentos e QUANTIDADES exatamente como estão escritos (não invente, não arredonde, não converta unidades).
+- Se algo estiver ilegível ou ausente, use "" ou null. NUNCA invente valores.
+- Mantenha a ordem das refeições do documento.
+- Responda APENAS o JSON.`;
+
+  const conteudo = mediaType==='application/pdf'
+    ? [{ type:'document', source:{ type:'base64', media_type:'application/pdf', data:base64 } }, { type:'text', text:instrucao }]
+    : [{ type:'image',    source:{ type:'base64', media_type:mediaType,          data:base64 } }, { type:'text', text:instrucao }];
+
+  const res = await fetch(AI_PROXY_URL, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      model:'claude-haiku-4-5-20251001',
+      max_tokens:4000,
+      messages:[{ role:'user', content:conteudo }]
+    })
+  });
+  if(!res.ok) throw new Error('Falha ao processar (HTTP '+res.status+'). Tente novamente.');
+  const data = await res.json();
+  if(data.error) throw new Error(typeof data.error==='string'?data.error:(data.error.message||'Erro ao ler o documento'));
+  const texto = (data.content||[]).map(b=>b.text||'').filter(Boolean).join('\n');
+  return parseAIJson(texto);
+}
+
+// ── Edição na revisão (o cliente corrige o que a IA leu) ──
+function editImportItem(mi, ii, valor){
+  const rx = state.importPreview; if(!rx) return;
+  rx.meals[mi].itens[ii] = valor;
+  state.importPreview = rx; saveState(state);
+}
+function editImportMealNome(mi, valor){
+  const rx = state.importPreview; if(!rx) return;
+  rx.meals[mi].nome = valor;
+  state.importPreview = rx; saveState(state);
+}
+function removeImportItem(mi, ii){
+  const rx = state.importPreview; if(!rx) return;
+  rx.meals[mi].itens.splice(ii,1);
+  state.importPreview = rx; saveState(state); render();
+}
+function removeImportMeal(mi){
+  const rx = state.importPreview; if(!rx) return;
+  rx.meals.splice(mi,1);
+  state.importPreview = rx; saveState(state); render();
+}
+function addImportItem(mi){
+  const rx = state.importPreview; if(!rx) return;
+  rx.meals[mi].itens.push('');
+  state.importPreview = rx; saveState(state); render();
+}
+
+// Confirma e salva como o plano do cliente
+function confirmarImportDieta(){
+  const rx = state.importPreview;
+  if(!rx || !rx.meals || !rx.meals.length){ showToast('Nada para salvar'); return; }
+  // Limpa itens vazios
+  rx.meals.forEach(m=>{ m.itens = (m.itens||[]).map(s=>String(s).trim()).filter(Boolean); });
+  rx.meals = rx.meals.filter(m=>m.itens.length);
+  rx.importadoEm = hojeLocal();
+  rx.origem = 'nutricionista';
+
+  state.dietaNutri = rx;
+  state.showImportModal = false;
+  state.importPreview = null;
+  state.importStep = 'upload';
+  state.planViewMode = 'nutri';   // mostra a dieta importada no plano
+  saveState(state);
+  render();
+  showToast('✓ Dieta do nutricionista importada!');
+}
+
+function removerDietaNutri(){
+  if(!confirm('Remover a dieta importada do nutricionista?')) return;
+  setState({dietaNutri:null, planViewMode:null});
+  showToast('Dieta removida');
+}
+
+// ── MODAL DE IMPORTAÇÃO (upload → lendo → revisar) ──
+function renderImportModal(){
+  if(!state.showImportModal) return '';
+  const step = state.importStep || 'upload';
+  const rx = state.importPreview;
+
+  let corpo = '';
+
+  if(step==='upload'){
+    corpo = `
+      <div style="text-align:center;padding:8px 0 4px">
+        <div style="font-size:44px;margin-bottom:8px">📄</div>
+        <p class="text-sm mb-1" style="color:var(--text-2)">Envie a <b>foto</b> ou o <b>PDF</b> da dieta que seu nutricionista passou.</p>
+        <p class="text-xs mb-4" style="color:var(--text-3)">A IA vai organizar tudo aqui no app — e você confere antes de salvar.</p>
+      </div>
+      ${state.importErro?`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:12px;margin-bottom:14px"><p class="text-xs" style="color:#b91c1c">${esc(state.importErro)}</p></div>`:''}
+      <label style="display:block;border:2px dashed var(--border);border-radius:16px;padding:26px 16px;text-align:center;cursor:pointer;background:var(--green-card)">
+        <input type="file" accept="image/*,application/pdf" onchange="onImportFile(this)" style="display:none">
+        <div style="font-size:30px;margin-bottom:6px">📷</div>
+        <div class="font-bold text-sm" style="color:var(--green-dark)">Escolher foto ou PDF</div>
+        <div class="text-xs mt-1" style="color:var(--text-3)">JPG, PNG ou PDF · até 8MB</div>
+      </label>
+      <p class="text-[11px] mt-4" style="color:var(--text-3);line-height:1.5">
+        💡 <b>Dica:</b> fotografe o documento inteiro, bem iluminado e sem sombras. Quanto mais nítido, melhor a leitura.
+      </p>
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px;margin-top:14px">
+        <p class="text-[11px]" style="color:#92400e;line-height:1.5">⚠️ A leitura é automática e pode conter erros. <b>Confira cada item</b> antes de salvar e siga sempre a orientação do seu nutricionista.</p>
+      </div>`;
+  }
+
+  else if(step==='lendo'){
+    corpo = `
+      <div style="text-align:center;padding:34px 0">
+        <div class="spin" style="width:44px;height:44px;border:4px solid var(--green-light);border-top-color:var(--green);border-radius:50%;margin:0 auto 18px"></div>
+        <p class="font-bold text-sm" style="color:var(--text)">Lendo sua dieta...</p>
+        <p class="text-xs mt-1" style="color:var(--text-3)">Identificando refeições, alimentos e quantidades</p>
+      </div>`;
+  }
+
+  else if(step==='revisar' && rx){
+    corpo = `
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px;margin-bottom:14px">
+        <p class="text-xs font-bold" style="color:#92400e;margin-bottom:3px">✏️ Confira antes de salvar</p>
+        <p class="text-[11px]" style="color:#a16207;line-height:1.5">Toque em qualquer item para corrigir. A IA pode ter lido algo errado — <b>as quantidades são importantes</b>.</p>
+      </div>
+
+      ${(rx.nutriName||rx.crn)?`<p class="text-xs mb-3" style="color:var(--text-3)">👤 ${esc(rx.nutriName||'—')}${rx.crn?' · CRN '+esc(rx.crn):''}</p>`:''}
+
+      ${(rx.kcal||rx.prot||rx.carb||rx.fat)?`
+      <div class="card p-3 mb-4">
+        <p class="text-[10px] font-bold uppercase tracking-wider mb-2" style="color:var(--text-3)">Metas prescritas</p>
+        <div class="grid grid-cols-4 gap-2 text-center">
+          <div><div class="font-extrabold text-sm" style="color:var(--green-dark)">${rx.kcal||'—'}</div><div class="text-[9px]" style="color:var(--text-3)">kcal</div></div>
+          <div><div class="font-extrabold text-sm" style="color:#60a5fa">${rx.prot||'—'}</div><div class="text-[9px]" style="color:var(--text-3)">prot</div></div>
+          <div><div class="font-extrabold text-sm" style="color:#fbbf24">${rx.carb||'—'}</div><div class="text-[9px]" style="color:var(--text-3)">carb</div></div>
+          <div><div class="font-extrabold text-sm" style="color:#f87171">${rx.fat||'—'}</div><div class="text-[9px]" style="color:var(--text-3)">gord</div></div>
+        </div>
+      </div>`:''}
+
+      <div class="space-y-3 mb-4">
+        ${(rx.meals||[]).map((m,mi)=>`
+        <div class="card p-3">
+          <div class="flex items-center gap-2 mb-2">
+            <input type="text" value="${esc(m.nome||'')}" oninput="editImportMealNome(${mi}, this.value)"
+              style="flex:1;font-weight:800;font-size:14px;color:var(--text);background:transparent;border:none;border-bottom:1px dashed var(--border);outline:none;padding:2px 0;font-family:inherit">
+            ${m.horario?`<span class="text-xs" style="color:var(--text-3)">${esc(m.horario)}</span>`:''}
+            <button onclick="removeImportMeal(${mi})" aria-label="Remover refeição" style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:13px;padding:2px 4px">✕</button>
+          </div>
+          ${(m.itens||[]).map((it,ii)=>`
+          <div class="flex items-center gap-2 mb-1.5">
+            <span style="width:5px;height:5px;border-radius:50%;background:var(--green);flex-shrink:0"></span>
+            <input type="text" value="${esc(it)}" oninput="editImportItem(${mi},${ii},this.value)"
+              style="flex:1;font-size:13px;color:var(--text-2);background:var(--bg2);border:1px solid var(--border);border-radius:8px;outline:none;padding:6px 9px;font-family:inherit">
+            <button onclick="removeImportItem(${mi},${ii})" aria-label="Remover item" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:12px;padding:2px 4px">✕</button>
+          </div>`).join('')}
+          <button onclick="addImportItem(${mi})" class="text-xs font-bold mt-1" style="background:none;border:none;cursor:pointer;color:var(--green-dark)">+ adicionar item</button>
+          ${(m.subs&&m.subs.length)?`<p class="text-[11px] mt-2" style="color:var(--green-mid)">🔄 ${m.subs.map(s=>esc(s)).join(' · ')}</p>`:''}
+        </div>`).join('')}
+      </div>
+
+      ${rx.orientacoes?`<div class="card p-3 mb-4"><p class="text-[10px] font-bold uppercase tracking-wider mb-1" style="color:var(--text-3)">Orientações</p><p class="text-xs" style="color:var(--text-2)">${esc(rx.orientacoes)}</p></div>`:''}
+
+      <button onclick="confirmarImportDieta()" class="btn-green w-full py-4 text-base" style="border:none;cursor:pointer">
+        ✓ Salvar minha dieta
+      </button>
+      <button onclick="setState({importStep:'upload',importPreview:null})" class="btn-ghost w-full py-3 text-sm mt-2">
+        Enviar outro arquivo
+      </button>`;
+  }
+
+  return `
+  <div class="modal-ov" style="align-items:flex-start;overflow-y:auto" onclick="if(event.target===this)fecharImportar()">
+    <div class="w-full p-6" style="background:var(--card);margin-top:6vh;border-radius:24px 24px 0 0;min-height:60vh">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-extrabold" style="color:var(--text)">📋 Dieta do nutricionista</h2>
+        <button onclick="fecharImportar()" class="w-8 h-8 rounded-full flex items-center justify-center" style="background:var(--bg2);border:none;cursor:pointer;color:var(--text-3)">✕</button>
+      </div>
+      ${corpo}
+      <div style="height:calc(24px + env(safe-area-inset-bottom))"></div>
+    </div>
+  </div>`;
+}
+
 function renderPlan(){
+  // Dieta importada do nutricionista tem prioridade de visualização
+  if(state.planViewMode==='nutri' && state.dietaNutri){
+    return `
+    <div class="px-5 pt-6 pb-4">
+      <div class="flex items-center justify-between mb-1">
+        <h1 class="text-xl font-extrabold" style="color:var(--text)">Minha Dieta</h1>
+        <button onclick="setState({planViewMode:null})" class="text-xs font-bold" style="background:none;border:none;cursor:pointer;color:var(--green-dark)">Ver outros planos</button>
+      </div>
+      <p class="text-sm mb-4" style="color:var(--text-2)">Prescrição do seu nutricionista${state.dietaNutri.importadoEm?' · importada em '+esc(state.dietaNutri.importadoEm.split('-').reverse().join('/')):''}</p>
+      ${renderPrescriptionContent(state.dietaNutri)}
+      <button onclick="removerDietaNutri()" class="btn-ghost w-full py-3 text-sm mt-4" style="color:#dc2626;border-color:#fca5a5">
+        Remover dieta importada
+      </button>
+    </div>`;
+  }
   const gk=state.goal||'hyper';
   const plan=MEAL_PLANS[gk];
   if(state.planViewMode==='shopping') return renderShopping();
@@ -2807,6 +3125,18 @@ function renderPlan(){
   <div class="px-5 pt-6 pb-4">
     <h1 class="text-xl font-extrabold mb-1" style="color:var(--text)">Plano Alimentar</h1>
     <p class="text-sm mb-5" style="color:var(--text-2)">Dieta personalizada por IA ou planos prontos</p>
+
+    <!-- IMPORTAR DIETA DO NUTRICIONISTA -->
+    <div onclick="${state.dietaNutri?`setState({planViewMode:'nutri'})`:`abrirImportarDieta()`}" class="card p-4 mb-5 fade-up" style="cursor:pointer;border:1.5px solid var(--green-light)">
+      <div class="flex items-center gap-3">
+        <div style="width:44px;height:44px;border-radius:12px;background:var(--green-light);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">📋</div>
+        <div style="flex:1;min-width:0">
+          <div class="font-bold text-sm" style="color:var(--text)">${state.dietaNutri?'Minha dieta do nutricionista':'Já tem dieta de um nutricionista?'}</div>
+          <div class="text-xs" style="color:var(--text-3)">${state.dietaNutri?'Toque para ver ou trocar':'Importe a foto ou PDF e siga aqui no app'}</div>
+        </div>
+        <i data-lucide="chevron-right" style="width:18px;height:18px;color:var(--text-3);flex-shrink:0"></i>
+      </div>
+    </div>
 
     <!-- DIETA GERADA POR IA -->
     <div class="fade-up mb-5">
@@ -3026,7 +3356,7 @@ function renderProgress(){
   const last7=[];
   for(let i=6;i>=0;i--){
     const d=new Date();d.setDate(d.getDate()-i);
-    const ds=d.toISOString().slice(0,10);
+    const ds=dataLocal(d);
     const e=wl.find(w=>w.date===ds);
     last7.push({day:['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][d.getDay()],cal:e?e.cal:0});
   }
@@ -3951,7 +4281,7 @@ const AI_GEN_LIMIT = 2; // gerações por mês por tipo (dieta / treino)
 
 // Garante que o contador reseta a cada mês
 function ensureGenMonth(){
-  const mes = new Date().toISOString().slice(0,7); // YYYY-MM
+  const mes = mesLocal(); // YYYY-MM
   if(state.aiGenMonth !== mes){
     state.aiGenMonth = mes;
     state.aiDietGenCount = 0;
@@ -4330,7 +4660,7 @@ function generateAIWorkout(){
   }, 1200);
 }
 function renderActivity(){
-  const today=new Date().toISOString().slice(0,10);
+  const today=hojeLocal();
   const actLog=state.actLog||[];
   const actWeek=state.actWeek||[];
   const todayActs=actLog.filter(a=>a.date===today);
@@ -4342,7 +4672,7 @@ function renderActivity(){
   const last7=[];
   for(let i=6;i>=0;i--){
     const d=new Date();d.setDate(d.getDate()-i);
-    const ds=d.toISOString().slice(0,10);
+    const ds=dataLocal(d);
     const dw=actWeek.find(w=>w.date===ds);
     last7.push({day:['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][d.getDay()],isToday:ds===today,kcal:dw?dw.kcal:0,min:dw?dw.min:0,hasAct:dw&&dw.min>0});
   }
@@ -6394,6 +6724,13 @@ if(state.screen==='main'){ const wc=calcWaterGoal(); state.waterGoal=wc.copos; s
 // Normaliza plano: se o tier de treino está desativado, rebaixa para dieta
 if(!FEATURES.planoTreino && state.planTier==='dietatreino'){ state.planTier='dieta'; saveState(state); }
 ensureGenMonth();
+// Vira o dia se necessário (00:00 hora local zera as refeições do dia)
+checkNovoDia();
+// Vigia a virada com o app aberto (a cada minuto) e quando volta do background
+setInterval(()=>{ if(checkNovoDia()) render(); }, 60000);
+document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden && checkNovoDia()) render();
+});
 // Inicializa o histórico de navegação (botão voltar do navegador)
 initHistory();
 // Tenta restaurar a sessão do Supabase antes de desenhar; se falhar, desenha mesmo assim
