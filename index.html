@@ -1780,6 +1780,16 @@ async function carregarPerfil(){
     if(error || !data) return;
     if(data.app_state && Object.keys(data.app_state).length){
       Object.assign(state, data.app_state);
+      // O estado da nuvem pode ser de um dia anterior (ou de outro aparelho).
+      // Sem isso, as refeições de ontem voltariam depois da virada do dia.
+      checkNovoDia();
+      // Estados transientes nunca devem vir da nuvem (evita modal reabrir sozinho)
+      Object.assign(state,{
+        showActModal:false, showJunkModal:false, showWaterModal:false,
+        showWeightModal:false, showAddMealModal:false, showUpgradeModal:false,
+        showMultiModal:false, showImportModal:false, selFoodId:null,
+        importStep:'upload', importPreview:null, importErro:'', importBusy:false
+      });
     }
     state.name      = data.nome      || state.name;
     state.goal      = data.goal      || state.goal;
